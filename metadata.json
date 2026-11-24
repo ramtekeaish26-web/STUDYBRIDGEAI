@@ -1,0 +1,6 @@
+{
+  "name": "STUDYBRIDGE",
+  "description": "Learn smarter. Understand deeper. Grow faster. An AI-powered educational platform for concept simplification, interactive quizzes, learning gap detection, and what-if experimentation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

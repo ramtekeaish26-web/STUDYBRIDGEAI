@@ -1,0 +1,456 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidLevel(val) {
+      return val is string && val in ['Beginner', 'Intermediate', 'Advanced'];
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+        'uid',
+        'displayName',
+        'email',
+        'academicFocus',
+        'defaultLevel',
+        'defaultLanguage',
+        'weeklyQuizGoal',
+        'showInstantFeedback',
+        'autoSaveLessons',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'uid',
+        'displayName',
+        'email',
+        'academicFocus',
+        'defaultLevel',
+        'defaultLanguage',
+        'weeklyQuizGoal',
+        'showInstantFeedback',
+        'autoSaveLessons',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+      && data.email is string && data.email.size() <= 160
+      && data.academicFocus is string && data.academicFocus.size() >= 1 && data.academicFocus.size() <= 120
+      && isValidLevel(data.defaultLevel)
+      && data.defaultLanguage is string && data.defaultLanguage.size() >= 1 && data.defaultLanguage.size() <= 40
+      && data.weeklyQuizGoal is int && data.weeklyQuizGoal >= 1 && data.weeklyQuizGoal <= 100
+      && data.showInstantFeedback is bool
+      && data.autoSaveLessons is bool
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidLesson(data, userId, lessonId) {
+      return data.keys().hasAll([
+        'id',
+        'uid',
+        'topic',
+        'title',
+        'subject',
+        'level',
+        'language',
+        'readMinutes',
+        'summary',
+        'definition',
+        'coreMechanism',
+        'examples',
+        'analogies',
+        'keyTakeaways',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'uid',
+        'topic',
+        'title',
+        'subject',
+        'level',
+        'language',
+        'readMinutes',
+        'summary',
+        'definition',
+        'coreMechanism',
+        'examples',
+        'analogies',
+        'keyTakeaways',
+        'groundedSources',
+        'sourceNoteName',
+        'isAiGenerated',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.id is string && data.id == lessonId && isValidId(data.id)
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.topic is string && data.topic.size() >= 1 && data.topic.size() <= 160
+      && data.title is string && data.title.size() >= 1 && data.title.size() <= 220
+      && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 80
+      && isValidLevel(data.level)
+      && data.language is string && data.language.size() >= 1 && data.language.size() <= 40
+      && data.readMinutes is int && data.readMinutes >= 1 && data.readMinutes <= 120
+      && data.summary is string && data.summary.size() <= 1500
+      && data.definition is string && data.definition.size() <= 2500
+      && data.coreMechanism is list && data.coreMechanism.size() <= 20
+      && (data.coreMechanism.size() == 0 || data.coreMechanism[0] is string)
+      && data.examples is list && data.examples.size() <= 10
+      && data.analogies is list && data.analogies.size() <= 10
+      && data.keyTakeaways is list && data.keyTakeaways.size() <= 15
+      && (data.keyTakeaways.size() == 0 || data.keyTakeaways[0] is string)
+      && (!('groundedSources' in data) || (data.groundedSources is list && data.groundedSources.size() <= 10))
+      && (!('sourceNoteName' in data) || (data.sourceNoteName is string && data.sourceNoteName.size() <= 160))
+      && (!('isAiGenerated' in data) || data.isAiGenerated is bool)
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidMastery(data, userId, topicId) {
+      return data.keys().hasAll([
+        'id',
+        'uid',
+        'topic',
+        'subject',
+        'correctAnswers',
+        'attemptedQuestions',
+        'strongConcepts',
+        'weakConcepts',
+        'revisionAdvice',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'uid',
+        'topic',
+        'subject',
+        'correctAnswers',
+        'attemptedQuestions',
+        'previousScorePercent',
+        'latestScorePercent',
+        'strongConcepts',
+        'weakConcepts',
+        'revisionAdvice',
+        'lastPracticedAt',
+        'updatedAt'
+      ])
+      && data.id is string && data.id == topicId && isValidId(data.id)
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.topic is string && data.topic.size() >= 1 && data.topic.size() <= 160
+      && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 80
+      && data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 100
+      && data.attemptedQuestions is int && data.attemptedQuestions >= 0 && data.attemptedQuestions <= 100
+      && (!('previousScorePercent' in data) || data.previousScorePercent == null || (data.previousScorePercent is int && data.previousScorePercent >= 0 && data.previousScorePercent <= 100))
+      && (!('latestScorePercent' in data) || data.latestScorePercent == null || (data.latestScorePercent is int && data.latestScorePercent >= 0 && data.latestScorePercent <= 100))
+      && data.strongConcepts is list && data.strongConcepts.size() <= 25
+      && data.weakConcepts is list && data.weakConcepts.size() <= 25
+      && data.revisionAdvice is string && data.revisionAdvice.size() <= 600
+      && (!('lastPracticedAt' in data) || data.lastPracticedAt == null || (data.lastPracticedAt is string && data.lastPracticedAt.size() <= 64))
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidQuizAttempt(data, userId, attemptId) {
+      return data.keys().hasAll([
+        'id',
+        'uid',
+        'topic',
+        'correctCount',
+        'totalQuestions',
+        'scorePercent',
+        'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'uid',
+        'topic',
+        'correctCount',
+        'totalQuestions',
+        'scorePercent',
+        'createdAt'
+      ])
+      && data.id is string && data.id == attemptId && isValidId(data.id)
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.topic is string && data.topic.size() >= 1 && data.topic.size() <= 160
+      && data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 50
+      && data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 50
+      && data.scorePercent is int && data.scorePercent >= 0 && data.scorePercent <= 100
+      && data.createdAt is timestamp;
+    }
+
+    function isValidFocusSession(data, userId, sessionId) {
+      return data.keys().hasAll(['id', 'uid', 'durationMinutes', 'focusTopic', 'createdAt'])
+      && data.keys().hasOnly(['id', 'uid', 'durationMinutes', 'focusTopic', 'createdAt'])
+      && data.id is string && data.id == sessionId && isValidId(data.id)
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 240
+      && data.focusTopic is string && data.focusTopic.size() <= 160
+      && data.createdAt is timestamp;
+    }
+
+    function isValidTutorThread(data, userId, threadId) {
+      return data.keys().hasAll([
+        'id',
+        'uid',
+        'title',
+        'roleId',
+        'modelId',
+        'useSearchGrounding',
+        'messages',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'uid',
+        'title',
+        'roleId',
+        'modelId',
+        'useSearchGrounding',
+        'messages',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.id is string && data.id == threadId && isValidId(data.id)
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+      && data.roleId is string && data.roleId.size() >= 1 && data.roleId.size() <= 60
+      && data.modelId is string && data.modelId.size() >= 1 && data.modelId.size() <= 60
+      && data.useSearchGrounding is bool
+      && data.messages is list && data.messages.size() <= 60
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidExperiment(data, userId, experimentId) {
+      return data.keys().hasAll([
+        'id',
+        'uid',
+        'question',
+        'title',
+        'domain',
+        'summary',
+        'predictions',
+        'parameters',
+        'outcomeExplanation',
+        'realWorldApplications',
+        'chartSeries',
+        'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'uid',
+        'question',
+        'title',
+        'domain',
+        'summary',
+        'predictions',
+        'parameters',
+        'outcomeExplanation',
+        'realWorldApplications',
+        'chartSeries',
+        'isAiGenerated',
+        'createdAt'
+      ])
+      && data.id is string && data.id == experimentId && isValidId(data.id)
+      && data.uid is string && data.uid == userId && data.uid.size() <= 128
+      && data.question is string && data.question.size() >= 1 && data.question.size() <= 300
+      && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+      && data.domain is string && data.domain.size() >= 1 && data.domain.size() <= 100
+      && data.summary is string && data.summary.size() <= 1500
+      && data.predictions is list && data.predictions.size() <= 10
+      && data.parameters is list && data.parameters.size() <= 10
+      && data.outcomeExplanation is list && data.outcomeExplanation.size() <= 15
+      && data.realWorldApplications is list && data.realWorldApplications.size() <= 10
+      && data.chartSeries is list && data.chartSeries.size() <= 15
+      && (!('isAiGenerated' in data) || data.isAiGenerated is bool)
+      && data.createdAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isVerifiedOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isVerifiedOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName',
+          'email',
+          'academicFocus',
+          'defaultLevel',
+          'defaultLanguage',
+          'weeklyQuizGoal',
+          'showInstantFeedback',
+          'autoSaveLessons',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+
+      match /lessons/{lessonId} {
+        allow get: if isValidId(userId) && isValidId(lessonId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(lessonId)
+          && isVerifiedOwner(userId)
+          && isValidLesson(incoming(), userId, lessonId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(lessonId)
+          && isVerifiedOwner(userId)
+          && isValidLesson(incoming(), userId, lessonId)
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'topic',
+            'title',
+            'subject',
+            'level',
+            'language',
+            'readMinutes',
+            'summary',
+            'definition',
+            'coreMechanism',
+            'examples',
+            'analogies',
+            'keyTakeaways',
+            'groundedSources',
+            'sourceNoteName',
+            'isAiGenerated',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(lessonId) && isVerifiedOwner(userId);
+      }
+
+      match /mastery/{topicId} {
+        allow get: if isValidId(userId) && isValidId(topicId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(topicId)
+          && isVerifiedOwner(userId)
+          && isValidMastery(incoming(), userId, topicId)
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(topicId)
+          && isVerifiedOwner(userId)
+          && isValidMastery(incoming(), userId, topicId)
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'topic',
+            'subject',
+            'correctAnswers',
+            'attemptedQuestions',
+            'previousScorePercent',
+            'latestScorePercent',
+            'strongConcepts',
+            'weakConcepts',
+            'revisionAdvice',
+            'lastPracticedAt',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(topicId) && isVerifiedOwner(userId);
+      }
+
+      match /quizAttempts/{attemptId} {
+        allow get: if isValidId(userId) && isValidId(attemptId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(attemptId)
+          && isVerifiedOwner(userId)
+          && isValidQuizAttempt(incoming(), userId, attemptId)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(attemptId) && isVerifiedOwner(userId);
+      }
+
+      match /focusSessions/{sessionId} {
+        allow get: if isValidId(userId) && isValidId(sessionId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(sessionId)
+          && isVerifiedOwner(userId)
+          && isValidFocusSession(incoming(), userId, sessionId)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(sessionId) && isVerifiedOwner(userId);
+      }
+
+      match /tutorThreads/{threadId} {
+        allow get: if isValidId(userId) && isValidId(threadId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(threadId)
+          && isVerifiedOwner(userId)
+          && isValidTutorThread(incoming(), userId, threadId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(threadId)
+          && isVerifiedOwner(userId)
+          && isValidTutorThread(incoming(), userId, threadId)
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title',
+            'roleId',
+            'modelId',
+            'useSearchGrounding',
+            'messages',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(threadId) && isVerifiedOwner(userId);
+      }
+
+      match /experiments/{experimentId} {
+        allow get: if isValidId(userId) && isValidId(experimentId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(experimentId)
+          && isVerifiedOwner(userId)
+          && isValidExperiment(incoming(), userId, experimentId)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(experimentId) && isVerifiedOwner(userId);
+      }
+    }
+  }
+}

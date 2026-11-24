@@ -1,0 +1,238 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private learner profile, default study settings, and weekly goal preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "maxLength": 160 },
+        "academicFocus": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "defaultLevel": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"] },
+        "defaultLanguage": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "weeklyQuizGoal": { "type": "number" },
+        "showInstantFeedback": { "type": "boolean" },
+        "autoSaveLessons": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "academicFocus",
+        "defaultLevel",
+        "defaultLanguage",
+        "weeklyQuizGoal",
+        "showInstantFeedback",
+        "autoSaveLessons",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "Structured concept simplifier lesson saved to a learner workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "topic": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 220 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "level": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"] },
+        "language": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "readMinutes": { "type": "number" },
+        "summary": { "type": "string", "maxLength": 1500 },
+        "definition": { "type": "string", "maxLength": 2500 },
+        "coreMechanism": { "type": "array" },
+        "examples": { "type": "array" },
+        "analogies": { "type": "array" },
+        "keyTakeaways": { "type": "array" },
+        "groundedSources": { "type": "array" },
+        "sourceNoteName": { "type": "string", "maxLength": 160 },
+        "isAiGenerated": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "topic",
+        "title",
+        "subject",
+        "level",
+        "language",
+        "readMinutes",
+        "summary",
+        "definition",
+        "coreMechanism",
+        "examples",
+        "analogies",
+        "keyTakeaways",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TopicMastery": {
+      "title": "TopicMastery",
+      "description": "Topic-level quiz accuracy, classification inputs, and revision advice.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "topic": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "correctAnswers": { "type": "number" },
+        "attemptedQuestions": { "type": "number" },
+        "previousScorePercent": { "type": "number" },
+        "latestScorePercent": { "type": "number" },
+        "strongConcepts": { "type": "array" },
+        "weakConcepts": { "type": "array" },
+        "revisionAdvice": { "type": "string", "maxLength": 600 },
+        "lastPracticedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "topic",
+        "subject",
+        "correctAnswers",
+        "attemptedQuestions",
+        "strongConcepts",
+        "weakConcepts",
+        "revisionAdvice",
+        "updatedAt"
+      ]
+    },
+    "QuizAttempt": {
+      "title": "QuizAttempt",
+      "description": "Immutable record of a completed quiz attempt.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "topic": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "correctCount": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "scorePercent": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "topic",
+        "correctCount",
+        "totalQuestions",
+        "scorePercent",
+        "createdAt"
+      ]
+    },
+    "FocusSession": {
+      "title": "FocusSession",
+      "description": "Completed Focus Timer study sprint logged from the sidebar.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "durationMinutes": { "type": "number" },
+        "focusTopic": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "durationMinutes", "focusTopic", "createdAt"]
+    },
+    "TutorThread": {
+      "title": "TutorThread",
+      "description": "Multi-turn Gemini Study Tutor conversation thread with grounding citations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "roleId": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "useSearchGrounding": { "type": "boolean" },
+        "messages": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "title",
+        "roleId",
+        "modelId",
+        "useSearchGrounding",
+        "messages",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Experiment": {
+      "title": "Experiment",
+      "description": "What-if simulation scenario saved in Experiment Lab.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "question": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "summary": { "type": "string", "maxLength": 1500 },
+        "predictions": { "type": "array" },
+        "parameters": { "type": "array" },
+        "outcomeExplanation": { "type": "array" },
+        "realWorldApplications": { "type": "array" },
+        "chartSeries": { "type": "array" },
+        "isAiGenerated": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "question",
+        "title",
+        "domain",
+        "summary",
+        "predictions",
+        "parameters",
+        "outcomeExplanation",
+        "realWorldApplications",
+        "chartSeries",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-only user profile and study settings."
+    },
+    "/users/{userId}/lessons/{lessonId}": {
+      "schema": { "$ref": "#/entities/Lesson" },
+      "description": "User's simplified concept lessons."
+    },
+    "/users/{userId}/mastery/{topicId}": {
+      "schema": { "$ref": "#/entities/TopicMastery" },
+      "description": "User's topic mastery records for Learning Gap Detector."
+    },
+    "/users/{userId}/quizAttempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/QuizAttempt" },
+      "description": "User's completed quiz attempt history."
+    },
+    "/users/{userId}/focusSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/FocusSession" },
+      "description": "User's logged sidebar Focus Timer sessions."
+    },
+    "/users/{userId}/tutorThreads/{threadId}": {
+      "schema": { "$ref": "#/entities/TutorThread" },
+      "description": "User's multi-turn Study Tutor conversations."
+    },
+    "/users/{userId}/experiments/{experimentId}": {
+      "schema": { "$ref": "#/entities/Experiment" },
+      "description": "User's Experiment Lab what-if scenarios."
+    }
+  }
+}
