@@ -52,6 +52,14 @@ export function LearningGapDetectorView() {
     return score !== null && score < 70;
   });
 
+  const strongConceptItems = testedRecords.flatMap((r) =>
+    r.strongConcepts.map((concept, i) => ({ topic: r.topic, concept, key: `${r.topic}-s-${i}` }))
+  );
+
+  const weakConceptItems = testedRecords.flatMap((r) =>
+    r.weakConcepts.map((concept, i) => ({ topic: r.topic, concept, key: `${r.topic}-w-${i}` }))
+  );
+
   return (
     <div className="space-y-7">
       <header>
@@ -193,7 +201,14 @@ export function LearningGapDetectorView() {
 
                     {/* Visual Progress Bar */}
                     <div className="mt-3 flex items-center gap-4">
-                      <div className="h-3 flex-1 overflow-hidden rounded-xl bg-[#dfe2ea] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.08)]">
+                      <div
+                        role="progressbar"
+                        aria-label={`${record.topic} mastery`}
+                        aria-valuenow={pct ?? 0}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="h-3 flex-1 overflow-hidden rounded-xl bg-[#dfe2ea] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.08)]"
+                      >
                         <div
                           className="h-full rounded-xl transition-all duration-300"
                           style={{
@@ -302,22 +317,13 @@ export function LearningGapDetectorView() {
             Areas where your accuracy is consistently reliable
           </p>
           <div className="mt-4 space-y-2.5">
-            {testedRecords.flatMap((r) =>
-              r.strongConcepts.map((concept, i) => (
-                <div key={`${r.topic}-s-${i}`} className="neu-inset-sm p-3">
-                  <p className="text-xs font-semibold text-[#1e2436]">{concept}</p>
-                  <p className="mt-0.5 text-[11px] text-[#5a6378]">{r.topic}</p>
+            {strongConceptItems.length > 0 ? (
+              strongConceptItems.map((item) => (
+                <div key={item.key} className="neu-inset-sm p-3">
+                  <p className="text-xs font-semibold text-[#1e2436]">{item.concept}</p>
+                  <p className="mt-0.5 text-[11px] text-[#5a6378]">{item.topic}</p>
                 </div>
               ))
-            ).length > 0 ? (
-              testedRecords.flatMap((r) =>
-                r.strongConcepts.map((concept, i) => (
-                  <div key={`${r.topic}-s-${i}`} className="neu-inset-sm p-3">
-                    <p className="text-xs font-semibold text-[#1e2436]">{concept}</p>
-                    <p className="mt-0.5 text-[11px] text-[#5a6378]">{r.topic}</p>
-                  </div>
-                ))
-              )
             ) : (
               <p className="text-xs text-[#5a6378]">
                 Complete quizzes in Quiz Arena to identify your strongest concepts.
@@ -336,46 +342,25 @@ export function LearningGapDetectorView() {
             Missed concepts recommended for targeted revision
           </p>
           <div className="mt-4 space-y-2.5">
-            {testedRecords.flatMap((r) =>
-              r.weakConcepts.map((concept, i) => (
+            {weakConceptItems.length > 0 ? (
+              weakConceptItems.map((item) => (
                 <div
-                  key={`${r.topic}-w-${i}`}
+                  key={item.key}
                   className="neu-inset-sm flex items-center justify-between gap-2 p-3"
                 >
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold text-[#1e2436]">{concept}</p>
-                    <p className="mt-0.5 text-[11px] text-[#5a6378]">{r.topic}</p>
+                    <p className="text-xs font-semibold text-[#1e2436]">{item.concept}</p>
+                    <p className="mt-0.5 text-[11px] text-[#5a6378]">{item.topic}</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => navigateToQuiz(r.topic)}
+                    onClick={() => navigateToQuiz(item.topic)}
                     className="neu-btn px-2.5 py-1.5 text-[11px] font-semibold text-[#6366f1] whitespace-nowrap shrink-0"
                   >
                     Drill
                   </button>
                 </div>
               ))
-            ).length > 0 ? (
-              testedRecords.flatMap((r) =>
-                r.weakConcepts.map((concept, i) => (
-                  <div
-                    key={`${r.topic}-w-${i}`}
-                    className="neu-inset-sm flex items-center justify-between gap-2 p-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-[#1e2436]">{concept}</p>
-                      <p className="mt-0.5 text-[11px] text-[#5a6378]">{r.topic}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => navigateToQuiz(r.topic)}
-                      className="neu-btn px-2.5 py-1.5 text-[11px] font-semibold text-[#6366f1] whitespace-nowrap shrink-0"
-                    >
-                      Drill
-                    </button>
-                  </div>
-                ))
-              )
             ) : (
               <p className="text-xs text-[#5a6378]">
                 No weak concepts currently flagged across your tested topics.

@@ -43,13 +43,15 @@ export function DashboardView() {
       classifyMastery(r.latestScorePercent, r.attemptedQuestions) === 'Good Understanding'
   ).length;
 
-  // Pick highest-priority topic to continue (weakest tested topic or most recent lesson)
-  const priorityGap = masteryRecords.find((r) => {
-    const cls = classifyMastery(r.latestScorePercent, r.attemptedQuestions);
-    return cls === 'Needs Improvement' || cls === 'Developing';
-  });
+  // Pick highest-priority topic to continue (lowest-scoring Needs Improvement / Developing topic)
+  const priorityGap = masteryRecords
+    .filter((r) => {
+      const cls = classifyMastery(r.latestScorePercent, r.attemptedQuestions);
+      return cls === 'Needs Improvement' || cls === 'Developing';
+    })
+    .sort((a, b) => (a.latestScorePercent ?? 100) - (b.latestScorePercent ?? 100))[0];
   const continueLesson =
-    lessons.find((l) => l.topic === priorityGap?.topic) ?? lessons[0];
+    lessons.find((l) => l.topic.toLowerCase() === priorityGap?.topic.toLowerCase()) ?? lessons[0];
 
   // Dynamic recommendations derived from current mastery state
   const recommendations = masteryRecords

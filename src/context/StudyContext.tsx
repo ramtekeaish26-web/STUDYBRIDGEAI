@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -20,19 +28,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, db, googleProvider, testConnection } from '../firebase';
-import {
-  INITIAL_FOCUS_SESSIONS,
-  INITIAL_LESSONS,
-  INITIAL_QUIZ_ATTEMPTS,
-  INITIAL_QUIZ_BANKS,
-  INITIAL_SETTINGS,
-  INITIAL_SOLUTIONS,
-  INITIAL_SOLUTION_CONTRIBUTIONS,
-  INITIAL_TOPIC_MASTERY,
-  INITIAL_TUTOR_THREADS,
-  INITIAL_WEEKLY_ACTIVITY,
-  SAMPLE_EXPERIMENTS,
-} from '../data/sampleData';
+import { INITIAL_LESSONS, INITIAL_SOLUTIONS, INITIAL_TUTOR_THREADS } from '../data/sampleData';
 import {
   ExperimentScenario,
   FocusSession,
@@ -48,34 +44,40 @@ import {
   TutorModelId,
   TutorRoleId,
   TutorThread,
-  WeeklyStudyDay,
 } from '../types/study';
-import { handleFirestoreError, OperationType, toSafeDocId } from '../utils/firestoreErrors';
-import { calculateMasteryPercentage, classifyMastery } from '../utils/mastery';
+import {
+  formatFirestoreErrorMessage,
+  OperationType,
+  toSafeDocId,
+} from '../utils/firestoreErrors';
+import {
+  addLessonToState,
+  appendTutorTurnInState,
+  applyQuizCompletionToState,
+  createInitialSampleState,
+  createTutorThreadRecord,
+  createUniqueId,
+  endorseSolutionInState,
+  loadPersistedState,
+  logFocusMinutesInState,
+  PersistedState,
+  QuizSubmissionInput,
+  STORAGE_KEY,
+  toggleSolutionTaskInState,
+} from '../utils/studyState';
 
-const STORAGE_KEY = 'studybridge_state_v3';
-
-interface PersistedState {
-  lessons: SimplifiedLesson[];
-  quizBanks: Record<string, QuizBank>;
-  masteryRecords: TopicMasteryRecord[];
-  quizAttempts: QuizAttempt[];
-  experiments: ExperimentScenario[];
-  weeklyActivity: WeeklyStudyDay[];
-  focusSessions: FocusSession[];
-  tutorThreads: TutorThread[];
-  solutions: SolutionProject[];
-  solutionContributions: Record<string, SolutionContribution[]>;
-  settings: StudentSettings;
-}
-
-interface QuizSubmissionInput {
-  topic: string;
-  subject: string;
-  correctCount: number;
-  totalQuestions: number;
-  strongConcepts: string[];
-  weakConcepts: string[];
+interface FocusTimerContextValue {
+  focusDurationMinutes: number;
+  focusRemainingSeconds: number;
+  focusRunning: boolean;
+  focusTopic: string;
+  lastCompletedFocusNotice: string | null;
+  setFocusDuration: (minutes: number) => void;
+  setFocusTopic: (topic: string) => void;
+  toggleFocusTimer: () => void;
+  resetFocusTimer: () => void;
+  logFocusSessionEarly: () => void;
+  dismissFocusNotice: () => void;
 }
 
 interface StudyContextValue extends PersistedState {
@@ -85,6 +87,7 @@ interface StudyContextValue extends PersistedState {
   setActiveQuizTopic: (topic: string) => void;
   activeLessonId: string;
   setActiveLessonId: (id: string) => void;
+  ephemeralLesson: SimplifiedLesson | null;
   simplifierDraftTopic: string;
   setSimplifierDraftTopic: (topic: string) => void;
   activeSolutionId: string;
@@ -105,6 +108,7 @@ interface StudyContextValue extends PersistedState {
   cloudRooms: SolutionProject[];
   createSolution: (solution: SolutionProject, publishToCloud?: boolean) => Promise<void>;
   publishSolutionToRoom: (solutionId: string) => Promise<void>;
+  toggleRoomVisibility: (solutionId: string) => Promise<void>;
   joinStudyRoomByCode: (roomCode: string) => Promise<{ ok: boolean; message: string }>;
   toggleSolutionTask: (solutionId: string, taskId: string) => Promise<void>;
   endorseSolution: (solutionId: string) => Promise<void>;
@@ -130,19 +134,6 @@ interface StudyContextValue extends PersistedState {
     text: string
   ) => Promise<void>;
 
-  // Global Focus Timer
-  focusDurationMinutes: number;
-  focusRemainingSeconds: number;
-  focusRunning: boolean;
-  focusTopic: string;
-  lastCompletedFocusNotice: string | null;
-  setFocusDuration: (minutes: number) => void;
-  setFocusTopic: (topic: string) => void;
-  toggleFocusTimer: () => void;
-  resetFocusTimer: () => void;
-  logFocusSessionEarly: () => void;
-  dismissFocusNotice: () => void;
-
   // Multi-turn Study Tutor
   activeTutorThreadId: string;
   setActiveTutorThreadId: (id: string) => void;
@@ -167,6 +158,7 @@ interface StudyContextValue extends PersistedState {
 }
 
 const StudyContext = createContext<StudyContextValue | null>(null);
+const FocusTimerContext = createContext<FocusTimerContextValue | null>(null);
 
 function normalizeTimestamp(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -176,53 +168,6 @@ function normalizeTimestamp(val: unknown): string {
     return val;
   }
   return new Date().toISOString();
-}
-
-function loadInitialState(): PersistedState {
-  try {
-    const raw =
-      localStorage.getItem(STORAGE_KEY) ||
-      localStorage.getItem('studybridge_state_v2') ||
-      localStorage.getItem('studybridge_state_v1');
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<PersistedState>;
-      if (parsed.lessons && parsed.masteryRecords && parsed.settings) {
-        return {
-          lessons: parsed.lessons,
-          quizBanks: parsed.quizBanks ?? INITIAL_QUIZ_BANKS,
-          masteryRecords: parsed.masteryRecords,
-          quizAttempts: parsed.quizAttempts ?? INITIAL_QUIZ_ATTEMPTS,
-          experiments: parsed.experiments ?? SAMPLE_EXPERIMENTS,
-          weeklyActivity: parsed.weeklyActivity ?? INITIAL_WEEKLY_ACTIVITY,
-          focusSessions: parsed.focusSessions ?? INITIAL_FOCUS_SESSIONS,
-          tutorThreads: parsed.tutorThreads ?? INITIAL_TUTOR_THREADS,
-          solutions:
-            parsed.solutions && parsed.solutions.length > 0
-              ? parsed.solutions
-              : INITIAL_SOLUTIONS,
-          solutionContributions:
-            parsed.solutionContributions ?? INITIAL_SOLUTION_CONTRIBUTIONS,
-          settings: { ...INITIAL_SETTINGS, ...parsed.settings },
-        };
-      }
-    }
-  } catch {
-    // Fall back to sample seed data
-  }
-
-  return {
-    lessons: INITIAL_LESSONS,
-    quizBanks: INITIAL_QUIZ_BANKS,
-    masteryRecords: INITIAL_TOPIC_MASTERY,
-    quizAttempts: INITIAL_QUIZ_ATTEMPTS,
-    experiments: SAMPLE_EXPERIMENTS,
-    weeklyActivity: INITIAL_WEEKLY_ACTIVITY,
-    focusSessions: INITIAL_FOCUS_SESSIONS,
-    tutorThreads: INITIAL_TUTOR_THREADS,
-    solutions: INITIAL_SOLUTIONS,
-    solutionContributions: INITIAL_SOLUTION_CONTRIBUTIONS,
-    settings: INITIAL_SETTINGS,
-  };
 }
 
 function mapRoomDoc(d: Record<string, unknown>): SolutionProject {
@@ -255,12 +200,13 @@ function mapRoomDoc(d: Record<string, unknown>): SolutionProject {
 }
 
 export function StudyProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<PersistedState>(() => loadInitialState());
+  const [state, setState] = useState<PersistedState>(() => loadPersistedState());
   const [activeScreen, setActiveScreen] = useState<NavScreen>('dashboard');
   const [activeQuizTopic, setActiveQuizTopic] = useState<string>('Photosynthesis & Calvin Cycle');
   const [activeLessonId, setActiveLessonId] = useState<string>(
     () => state.lessons[0]?.id ?? INITIAL_LESSONS[0].id
   );
+  const [ephemeralLesson, setEphemeralLesson] = useState<SimplifiedLesson | null>(null);
   const [simplifierDraftTopic, setSimplifierDraftTopic] = useState<string>('');
   const [activeSolutionId, setActiveSolutionId] = useState<string>(
     () => state.solutions[0]?.id ?? INITIAL_SOLUTIONS[0].id
@@ -268,7 +214,7 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
   const [solutionDraftTopic, setSolutionDraftTopic] = useState<string>('');
   const [cloudRooms, setCloudRooms] = useState<SolutionProject[]>([]);
 
-  // Focus Timer State
+  // Focus Timer State (isolated in FocusTimerContext so ticks don't re-render the full app)
   const [focusDurationMinutes, setFocusDurationMinutes] = useState<number>(25);
   const [focusRemainingSeconds, setFocusRemainingSeconds] = useState<number>(25 * 60);
   const [focusRunning, setFocusRunning] = useState<boolean>(false);
@@ -287,7 +233,6 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
   const [syncStatus, setSyncStatus] = useState<'guest' | 'syncing' | 'synced' | 'error'>('guest');
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Refs prevent React 19 batching / interval stale-closure bugs
   const stateRef = useRef<PersistedState>(state);
   stateRef.current = state;
   const userRef = useRef<User | null>(user);
@@ -296,6 +241,8 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
   focusTopicRef.current = focusTopic;
   const focusDurationRef = useRef<number>(focusDurationMinutes);
   focusDurationRef.current = focusDurationMinutes;
+  const focusRemainingRef = useRef<number>(focusRemainingSeconds);
+  focusRemainingRef.current = focusRemainingSeconds;
 
   useEffect(() => {
     try {
@@ -305,222 +252,261 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state]);
 
-  // Startup Firestore connection validation
   useEffect(() => {
     testConnection().catch(() => {});
   }, []);
 
-  // Firestore Write Helpers (strictly respecting firestore.rules schemas)
-  const syncLessonToCloud = async (uid: string, lesson: SimplifiedLesson) => {
-    const lessonId = toSafeDocId(lesson.id, 'lesson');
-    const path = `users/${uid}/lessons/${lessonId}`;
-    const docRef = doc(db, 'users', uid, 'lessons', lessonId);
-    try {
-      const existingSnap = await getDoc(docRef);
-      const basePayload = {
-        topic: lesson.topic.slice(0, 160),
-        title: lesson.title.slice(0, 220),
-        subject: lesson.subject.slice(0, 80),
-        level: lesson.level,
-        language: lesson.language.slice(0, 40),
-        readMinutes: Math.max(1, Math.min(120, Math.round(lesson.readMinutes || 5))),
-        summary: lesson.summary.slice(0, 1500),
-        definition: lesson.definition.slice(0, 2500),
-        coreMechanism: lesson.coreMechanism.slice(0, 20),
-        examples: lesson.examples.slice(0, 10),
-        analogies: lesson.analogies.slice(0, 10),
-        keyTakeaways: lesson.keyTakeaways.slice(0, 15),
-        ...(lesson.groundedSources && lesson.groundedSources.length > 0
-          ? { groundedSources: lesson.groundedSources.slice(0, 10) }
-          : {}),
-        ...(lesson.sourceNoteName
-          ? { sourceNoteName: lesson.sourceNoteName.slice(0, 160) }
-          : {}),
-        ...(lesson.isAiGenerated !== undefined ? { isAiGenerated: lesson.isAiGenerated } : {}),
-        updatedAt: serverTimestamp(),
-      };
+  const reportCloudError = useCallback(
+    (error: unknown, operationType: OperationType, path: string | null) => {
+      const msg = formatFirestoreErrorMessage(error, operationType, path);
+      setSyncStatus('error');
+      setAuthError(msg);
+    },
+    []
+  );
 
-      if (existingSnap.exists()) {
-        await updateDoc(docRef, basePayload);
-      } else {
-        await setDoc(docRef, {
-          id: lessonId,
-          uid,
-          ...basePayload,
-          createdAt: serverTimestamp(),
-        });
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  };
-
-  const syncMasteryToCloud = async (uid: string, record: TopicMasteryRecord) => {
-    const topicId = toSafeDocId(`topic_${record.topic}`, 'topic');
-    const path = `users/${uid}/mastery/${topicId}`;
-    const docRef = doc(db, 'users', uid, 'mastery', topicId);
-    try {
-      const existingSnap = await getDoc(docRef);
-      const payload = {
-        topic: record.topic.slice(0, 160),
-        subject: record.subject.slice(0, 80),
-        correctAnswers: Math.max(0, Math.min(100, Math.round(record.correctAnswers))),
-        attemptedQuestions: Math.max(0, Math.min(100, Math.round(record.attemptedQuestions))),
-        previousScorePercent:
-          record.previousScorePercent !== null ? Math.round(record.previousScorePercent) : null,
-        latestScorePercent:
-          record.latestScorePercent !== null ? Math.round(record.latestScorePercent) : null,
-        strongConcepts: record.strongConcepts.slice(0, 25),
-        weakConcepts: record.weakConcepts.slice(0, 25),
-        revisionAdvice: record.revisionAdvice.slice(0, 600),
-        lastPracticedAt: record.lastPracticedAt,
-        updatedAt: serverTimestamp(),
-      };
-
-      if (existingSnap.exists()) {
-        await updateDoc(docRef, payload);
-      } else {
-        await setDoc(docRef, {
-          id: topicId,
-          uid,
-          ...payload,
-        });
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  };
-
-  const syncQuizAttemptToCloud = async (uid: string, attempt: QuizAttempt) => {
-    const attemptId = toSafeDocId(attempt.id, 'att');
-    const path = `users/${uid}/quizAttempts/${attemptId}`;
-    try {
-      await setDoc(doc(db, 'users', uid, 'quizAttempts', attemptId), {
-        id: attemptId,
-        uid,
-        topic: attempt.topic.slice(0, 160),
-        correctCount: Math.max(0, Math.min(50, Math.round(attempt.correctCount))),
-        totalQuestions: Math.max(1, Math.min(50, Math.round(attempt.totalQuestions))),
-        scorePercent: Math.max(0, Math.min(100, Math.round(attempt.scorePercent))),
-        createdAt: serverTimestamp(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  };
-
-  const syncFocusSessionToCloud = async (uid: string, session: FocusSession) => {
-    const sessionId = toSafeDocId(session.id, 'fs');
-    const path = `users/${uid}/focusSessions/${sessionId}`;
-    try {
-      await setDoc(doc(db, 'users', uid, 'focusSessions', sessionId), {
-        id: sessionId,
-        uid,
-        durationMinutes: Math.max(1, Math.min(240, Math.round(session.durationMinutes))),
-        focusTopic: session.focusTopic.slice(0, 160),
-        createdAt: serverTimestamp(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  };
-
-  const syncTutorThreadToCloud = async (uid: string, thread: TutorThread) => {
-    const threadId = toSafeDocId(thread.id, 'thread');
-    const path = `users/${uid}/tutorThreads/${threadId}`;
-    const docRef = doc(db, 'users', uid, 'tutorThreads', threadId);
-    try {
-      const existingSnap = await getDoc(docRef);
-      const payload = {
-        title: thread.title.slice(0, 160),
-        roleId: thread.roleId.slice(0, 60),
-        modelId: thread.modelId.slice(0, 60),
-        useSearchGrounding: Boolean(thread.useSearchGrounding),
-        messages: thread.messages.slice(-60),
-        updatedAt: serverTimestamp(),
-      };
-      if (existingSnap.exists()) {
-        await updateDoc(docRef, payload);
-      } else {
-        await setDoc(docRef, {
-          id: threadId,
-          uid,
-          ...payload,
-          createdAt: serverTimestamp(),
-        });
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  };
-
-  const syncExperimentToCloud = async (uid: string, exp: ExperimentScenario) => {
-    const expId = toSafeDocId(exp.id, 'exp');
-    const path = `users/${uid}/experiments/${expId}`;
-    try {
-      await setDoc(doc(db, 'users', uid, 'experiments', expId), {
-        id: expId,
-        uid,
-        question: exp.question.slice(0, 300),
-        title: exp.title.slice(0, 200),
-        domain: exp.domain.slice(0, 100),
-        summary: exp.summary.slice(0, 1500),
-        predictions: exp.predictions.slice(0, 10),
-        parameters: exp.parameters.slice(0, 10),
-        outcomeExplanation: exp.outcomeExplanation.slice(0, 15),
-        realWorldApplications: exp.realWorldApplications.slice(0, 10),
-        chartSeries: exp.chartSeries.slice(0, 15),
-        ...(exp.isAiGenerated !== undefined ? { isAiGenerated: exp.isAiGenerated } : {}),
-        createdAt: serverTimestamp(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  };
-
-  const seedInitialCloudWorkspace = async (firebaseUser: User) => {
-    const uid = firebaseUser.uid;
-    const profileRef = doc(db, 'users', uid);
-    const snapshot = stateRef.current;
-
-    try {
-      const profileSnap = await getDoc(profileRef);
-      if (!profileSnap.exists()) {
-        await setDoc(profileRef, {
-          uid,
-          displayName: (
-            firebaseUser.displayName ||
-            snapshot.settings.studentName ||
-            'Learner'
-          ).slice(0, 80),
-          email: (firebaseUser.email || '').slice(0, 160),
-          academicFocus: (snapshot.settings.academicFocus || 'STEM Foundations').slice(0, 120),
-          defaultLevel: snapshot.settings.defaultLevel,
-          defaultLanguage: snapshot.settings.defaultLanguage.slice(0, 40),
-          weeklyQuizGoal: Math.max(1, Math.min(100, Math.round(snapshot.settings.weeklyQuizGoal))),
-          showInstantFeedback: Boolean(snapshot.settings.showInstantFeedback),
-          autoSaveLessons: Boolean(snapshot.settings.autoSaveLessons),
-          createdAt: serverTimestamp(),
+  const syncLessonToCloud = useCallback(
+    async (uid: string, lesson: SimplifiedLesson) => {
+      const lessonId = toSafeDocId(lesson.id, 'lesson');
+      const path = `users/${uid}/lessons/${lessonId}`;
+      const docRef = doc(db, 'users', uid, 'lessons', lessonId);
+      try {
+        const existingSnap = await getDoc(docRef);
+        const basePayload = {
+          topic: lesson.topic.slice(0, 160),
+          title: lesson.title.slice(0, 220),
+          subject: lesson.subject.slice(0, 80),
+          level: lesson.level,
+          language: lesson.language.slice(0, 40),
+          readMinutes: Math.max(1, Math.min(120, Math.round(lesson.readMinutes || 5))),
+          summary: lesson.summary.slice(0, 1500),
+          definition: lesson.definition.slice(0, 2500),
+          coreMechanism: lesson.coreMechanism.slice(0, 20),
+          examples: lesson.examples.slice(0, 10),
+          analogies: lesson.analogies.slice(0, 10),
+          keyTakeaways: lesson.keyTakeaways.slice(0, 15),
+          ...(lesson.groundedSources && lesson.groundedSources.length > 0
+            ? { groundedSources: lesson.groundedSources.slice(0, 10) }
+            : {}),
+          ...(lesson.sourceNoteName
+            ? { sourceNoteName: lesson.sourceNoteName.slice(0, 160) }
+            : {}),
+          ...(lesson.isAiGenerated !== undefined ? { isAiGenerated: lesson.isAiGenerated } : {}),
           updatedAt: serverTimestamp(),
-        });
+        };
 
-        await Promise.all([
-          ...snapshot.lessons.map((l) => syncLessonToCloud(uid, l)),
-          ...snapshot.masteryRecords.map((m) => syncMasteryToCloud(uid, m)),
-          ...snapshot.quizAttempts.map((a) => syncQuizAttemptToCloud(uid, a)),
-          ...snapshot.focusSessions.map((f) => syncFocusSessionToCloud(uid, f)),
-          ...snapshot.tutorThreads.map((t) => syncTutorThreadToCloud(uid, t)),
-          ...snapshot.experiments.map((e) => syncExperimentToCloud(uid, e)),
-        ]);
+        if (existingSnap.exists()) {
+          await updateDoc(docRef, basePayload);
+        } else {
+          await setDoc(docRef, {
+            id: lessonId,
+            uid,
+            ...basePayload,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (error) {
+        reportCloudError(error, OperationType.WRITE, path);
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
-    }
-  };
+    },
+    [reportCloudError]
+  );
+
+  const syncMasteryToCloud = useCallback(
+    async (uid: string, record: TopicMasteryRecord) => {
+      const topicId = toSafeDocId(`topic_${record.topic}`, 'topic');
+      const path = `users/${uid}/mastery/${topicId}`;
+      const docRef = doc(db, 'users', uid, 'mastery', topicId);
+      try {
+        const existingSnap = await getDoc(docRef);
+        const payload = {
+          topic: record.topic.slice(0, 160),
+          subject: record.subject.slice(0, 80),
+          correctAnswers: Math.max(0, Math.min(100, Math.round(record.correctAnswers))),
+          attemptedQuestions: Math.max(0, Math.min(100, Math.round(record.attemptedQuestions))),
+          previousScorePercent:
+            record.previousScorePercent !== null ? Math.round(record.previousScorePercent) : null,
+          latestScorePercent:
+            record.latestScorePercent !== null ? Math.round(record.latestScorePercent) : null,
+          strongConcepts: record.strongConcepts.slice(0, 25),
+          weakConcepts: record.weakConcepts.slice(0, 25),
+          revisionAdvice: record.revisionAdvice.slice(0, 600),
+          lastPracticedAt: record.lastPracticedAt,
+          updatedAt: serverTimestamp(),
+        };
+
+        if (existingSnap.exists()) {
+          await updateDoc(docRef, payload);
+        } else {
+          await setDoc(docRef, {
+            id: topicId,
+            uid,
+            ...payload,
+          });
+        }
+      } catch (error) {
+        reportCloudError(error, OperationType.WRITE, path);
+      }
+    },
+    [reportCloudError]
+  );
+
+  const syncQuizAttemptToCloud = useCallback(
+    async (uid: string, attempt: QuizAttempt) => {
+      const attemptId = toSafeDocId(attempt.id, 'att');
+      const path = `users/${uid}/quizAttempts/${attemptId}`;
+      try {
+        await setDoc(doc(db, 'users', uid, 'quizAttempts', attemptId), {
+          id: attemptId,
+          uid,
+          topic: attempt.topic.slice(0, 160),
+          correctCount: Math.max(0, Math.min(50, Math.round(attempt.correctCount))),
+          totalQuestions: Math.max(1, Math.min(50, Math.round(attempt.totalQuestions))),
+          scorePercent: Math.max(0, Math.min(100, Math.round(attempt.scorePercent))),
+          createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        reportCloudError(error, OperationType.CREATE, path);
+      }
+    },
+    [reportCloudError]
+  );
+
+  const syncFocusSessionToCloud = useCallback(
+    async (uid: string, session: FocusSession) => {
+      const sessionId = toSafeDocId(session.id, 'fs');
+      const path = `users/${uid}/focusSessions/${sessionId}`;
+      try {
+        await setDoc(doc(db, 'users', uid, 'focusSessions', sessionId), {
+          id: sessionId,
+          uid,
+          durationMinutes: Math.max(1, Math.min(240, Math.round(session.durationMinutes))),
+          focusTopic: session.focusTopic.slice(0, 160),
+          createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        reportCloudError(error, OperationType.CREATE, path);
+      }
+    },
+    [reportCloudError]
+  );
+
+  const syncTutorThreadToCloud = useCallback(
+    async (uid: string, thread: TutorThread) => {
+      const threadId = toSafeDocId(thread.id, 'thread');
+      const path = `users/${uid}/tutorThreads/${threadId}`;
+      const docRef = doc(db, 'users', uid, 'tutorThreads', threadId);
+      try {
+        const existingSnap = await getDoc(docRef);
+        const payload = {
+          title: thread.title.slice(0, 160),
+          roleId: thread.roleId.slice(0, 60),
+          modelId: thread.modelId.slice(0, 60),
+          useSearchGrounding: Boolean(thread.useSearchGrounding),
+          messages: thread.messages.slice(-60),
+          updatedAt: serverTimestamp(),
+        };
+        if (existingSnap.exists()) {
+          await updateDoc(docRef, payload);
+        } else {
+          await setDoc(docRef, {
+            id: threadId,
+            uid,
+            ...payload,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (error) {
+        reportCloudError(error, OperationType.WRITE, path);
+      }
+    },
+    [reportCloudError]
+  );
+
+  const syncExperimentToCloud = useCallback(
+    async (uid: string, exp: ExperimentScenario) => {
+      const expId = toSafeDocId(exp.id, 'exp');
+      const path = `users/${uid}/experiments/${expId}`;
+      try {
+        await setDoc(doc(db, 'users', uid, 'experiments', expId), {
+          id: expId,
+          uid,
+          question: exp.question.slice(0, 300),
+          title: exp.title.slice(0, 200),
+          domain: exp.domain.slice(0, 100),
+          summary: exp.summary.slice(0, 1500),
+          predictions: exp.predictions.slice(0, 10),
+          parameters: exp.parameters.slice(0, 10),
+          outcomeExplanation: exp.outcomeExplanation.slice(0, 15),
+          realWorldApplications: exp.realWorldApplications.slice(0, 10),
+          chartSeries: exp.chartSeries.slice(0, 15),
+          ...(exp.isAiGenerated !== undefined ? { isAiGenerated: exp.isAiGenerated } : {}),
+          createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        reportCloudError(error, OperationType.CREATE, path);
+      }
+    },
+    [reportCloudError]
+  );
+
+  const seedInitialCloudWorkspace = useCallback(
+    async (firebaseUser: User): Promise<boolean> => {
+      const uid = firebaseUser.uid;
+      const profileRef = doc(db, 'users', uid);
+      const snapshot = stateRef.current;
+
+      try {
+        const profileSnap = await getDoc(profileRef);
+        if (!profileSnap.exists()) {
+          await setDoc(profileRef, {
+            uid,
+            displayName: (
+              firebaseUser.displayName ||
+              snapshot.settings.studentName ||
+              'Learner'
+            ).slice(0, 80),
+            email: (firebaseUser.email || '').slice(0, 160),
+            academicFocus: (snapshot.settings.academicFocus || 'STEM Foundations').slice(0, 120),
+            defaultLevel: snapshot.settings.defaultLevel,
+            defaultLanguage: snapshot.settings.defaultLanguage.slice(0, 40),
+            weeklyQuizGoal: Math.max(1, Math.min(100, Math.round(snapshot.settings.weeklyQuizGoal))),
+            showInstantFeedback: Boolean(snapshot.settings.showInstantFeedback),
+            autoSaveLessons: Boolean(snapshot.settings.autoSaveLessons),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+
+          await Promise.all([
+            ...snapshot.lessons.map((l) => syncLessonToCloud(uid, l)),
+            ...snapshot.masteryRecords.map((m) => syncMasteryToCloud(uid, m)),
+            ...snapshot.quizAttempts.map((a) => syncQuizAttemptToCloud(uid, a)),
+            ...snapshot.focusSessions.map((f) => syncFocusSessionToCloud(uid, f)),
+            ...snapshot.tutorThreads.map((t) => syncTutorThreadToCloud(uid, t)),
+            ...snapshot.experiments.map((e) => syncExperimentToCloud(uid, e)),
+          ]);
+        }
+        return true;
+      } catch (error) {
+        reportCloudError(error, OperationType.WRITE, `users/${uid}`);
+        return false;
+      }
+    },
+    [
+      reportCloudError,
+      syncExperimentToCloud,
+      syncFocusSessionToCloud,
+      syncLessonToCloud,
+      syncMasteryToCloud,
+      syncQuizAttemptToCloud,
+      syncTutorThreadToCloud,
+    ]
+  );
 
   // Firebase Auth & Real-Time Firestore Listeners
   useEffect(() => {
     let unsubscribes: Array<() => void> = [];
+    let cancelled = false;
 
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       unsubscribes.forEach((u) => u());
@@ -535,14 +521,19 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (!firebaseUser.emailVerified) {
+        setSyncStatus('error');
+        setAuthError(
+          'Your Google email address is not verified yet. Cloud sync requires a verified email.'
+        );
+        return;
+      }
+
       setSyncStatus('syncing');
       setAuthError(null);
 
-      try {
-        await seedInitialCloudWorkspace(firebaseUser);
-      } catch (err) {
-        setSyncStatus('error');
-        setAuthError(err instanceof Error ? err.message : 'Unable to initialize cloud workspace.');
+      const seeded = await seedInitialCloudWorkspace(firebaseUser);
+      if (!seeded || cancelled) {
         return;
       }
 
@@ -574,156 +565,143 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
           }
           setSyncStatus('synced');
         },
-        (error) => handleFirestoreError(error, OperationType.GET, `users/${uid}`)
+        (error) => reportCloudError(error, OperationType.GET, `users/${uid}`)
       );
 
       const unsubLessons = onSnapshot(
         query(collection(db, 'users', uid, 'lessons'), orderBy('updatedAt', 'desc')),
         (snap) => {
-          if (!snap.empty) {
-            const loaded: SimplifiedLesson[] = snap.docs.map((docSnap) => {
-              const d = docSnap.data();
-              return {
-                id: d.id,
-                topic: d.topic,
-                title: d.title,
-                subject: d.subject,
-                level: d.level,
-                language: d.language,
-                readMinutes: d.readMinutes,
-                summary: d.summary,
-                definition: d.definition,
-                coreMechanism: d.coreMechanism || [],
-                examples: d.examples || [],
-                analogies: d.analogies || [],
-                keyTakeaways: d.keyTakeaways || [],
-                groundedSources: d.groundedSources,
-                sourceNoteName: d.sourceNoteName,
-                isAiGenerated: d.isAiGenerated,
-                createdAt: normalizeTimestamp(d.createdAt),
-              };
-            });
-            setState((prev) => ({ ...prev, lessons: loaded }));
-          }
+          const loaded: SimplifiedLesson[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: d.id,
+              topic: d.topic,
+              title: d.title,
+              subject: d.subject,
+              level: d.level,
+              language: d.language,
+              readMinutes: d.readMinutes,
+              summary: d.summary,
+              definition: d.definition,
+              coreMechanism: d.coreMechanism || [],
+              examples: d.examples || [],
+              analogies: d.analogies || [],
+              keyTakeaways: d.keyTakeaways || [],
+              groundedSources: d.groundedSources,
+              sourceNoteName: d.sourceNoteName,
+              isAiGenerated: d.isAiGenerated,
+              createdAt: normalizeTimestamp(d.createdAt),
+            };
+          });
+          setState((prev) => ({ ...prev, lessons: loaded }));
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/lessons`)
+        (error) => reportCloudError(error, OperationType.LIST, `users/${uid}/lessons`)
       );
 
       const unsubMastery = onSnapshot(
         collection(db, 'users', uid, 'mastery'),
         (snap) => {
-          if (!snap.empty) {
-            const loaded: TopicMasteryRecord[] = snap.docs.map((docSnap) => {
-              const d = docSnap.data();
-              return {
-                topic: d.topic,
-                subject: d.subject,
-                correctAnswers: d.correctAnswers,
-                attemptedQuestions: d.attemptedQuestions,
-                previousScorePercent: d.previousScorePercent ?? null,
-                latestScorePercent: d.latestScorePercent ?? null,
-                lastPracticedAt: d.lastPracticedAt ?? null,
-                strongConcepts: d.strongConcepts || [],
-                weakConcepts: d.weakConcepts || [],
-                revisionAdvice: d.revisionAdvice || '',
-              };
-            });
-            setState((prev) => ({ ...prev, masteryRecords: loaded }));
-          }
+          const loaded: TopicMasteryRecord[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              topic: d.topic,
+              subject: d.subject,
+              correctAnswers: d.correctAnswers,
+              attemptedQuestions: d.attemptedQuestions,
+              previousScorePercent: d.previousScorePercent ?? null,
+              latestScorePercent: d.latestScorePercent ?? null,
+              lastPracticedAt: d.lastPracticedAt ?? null,
+              strongConcepts: d.strongConcepts || [],
+              weakConcepts: d.weakConcepts || [],
+              revisionAdvice: d.revisionAdvice || '',
+            };
+          });
+          setState((prev) => ({ ...prev, masteryRecords: loaded }));
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/mastery`)
+        (error) => reportCloudError(error, OperationType.LIST, `users/${uid}/mastery`)
       );
 
       const unsubAttempts = onSnapshot(
         query(collection(db, 'users', uid, 'quizAttempts'), orderBy('createdAt', 'desc')),
         (snap) => {
-          if (!snap.empty) {
-            const loaded: QuizAttempt[] = snap.docs.map((docSnap) => {
-              const d = docSnap.data();
-              return {
-                id: d.id,
-                topic: d.topic,
-                correctCount: d.correctCount,
-                totalQuestions: d.totalQuestions,
-                scorePercent: d.scorePercent,
-                timestamp: normalizeTimestamp(d.createdAt),
-              };
-            });
-            setState((prev) => ({ ...prev, quizAttempts: loaded }));
-          }
+          const loaded: QuizAttempt[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: d.id,
+              topic: d.topic,
+              correctCount: d.correctCount,
+              totalQuestions: d.totalQuestions,
+              scorePercent: d.scorePercent,
+              timestamp: normalizeTimestamp(d.createdAt),
+            };
+          });
+          setState((prev) => ({ ...prev, quizAttempts: loaded }));
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/quizAttempts`)
+        (error) => reportCloudError(error, OperationType.LIST, `users/${uid}/quizAttempts`)
       );
 
       const unsubFocus = onSnapshot(
         query(collection(db, 'users', uid, 'focusSessions'), orderBy('createdAt', 'desc')),
         (snap) => {
-          if (!snap.empty) {
-            const loaded: FocusSession[] = snap.docs.map((docSnap) => {
-              const d = docSnap.data();
-              return {
-                id: d.id,
-                durationMinutes: d.durationMinutes,
-                focusTopic: d.focusTopic,
-                createdAt: normalizeTimestamp(d.createdAt),
-              };
-            });
-            setState((prev) => ({ ...prev, focusSessions: loaded }));
-          }
+          const loaded: FocusSession[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: d.id,
+              durationMinutes: d.durationMinutes,
+              focusTopic: d.focusTopic,
+              createdAt: normalizeTimestamp(d.createdAt),
+            };
+          });
+          setState((prev) => ({ ...prev, focusSessions: loaded }));
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/focusSessions`)
+        (error) => reportCloudError(error, OperationType.LIST, `users/${uid}/focusSessions`)
       );
 
       const unsubTutor = onSnapshot(
         query(collection(db, 'users', uid, 'tutorThreads'), orderBy('updatedAt', 'desc')),
         (snap) => {
-          if (!snap.empty) {
-            const loaded: TutorThread[] = snap.docs.map((docSnap) => {
-              const d = docSnap.data();
-              return {
-                id: d.id,
-                title: d.title,
-                roleId: d.roleId,
-                modelId: d.modelId,
-                useSearchGrounding: Boolean(d.useSearchGrounding),
-                messages: d.messages || [],
-                createdAt: normalizeTimestamp(d.createdAt),
-                updatedAt: normalizeTimestamp(d.updatedAt),
-              };
-            });
-            setState((prev) => ({ ...prev, tutorThreads: loaded }));
-          }
+          const loaded: TutorThread[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: d.id,
+              title: d.title,
+              roleId: d.roleId,
+              modelId: d.modelId,
+              useSearchGrounding: Boolean(d.useSearchGrounding),
+              messages: d.messages || [],
+              createdAt: normalizeTimestamp(d.createdAt),
+              updatedAt: normalizeTimestamp(d.updatedAt),
+            };
+          });
+          setState((prev) => ({ ...prev, tutorThreads: loaded }));
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/tutorThreads`)
+        (error) => reportCloudError(error, OperationType.LIST, `users/${uid}/tutorThreads`)
       );
 
       const unsubExperiments = onSnapshot(
         query(collection(db, 'users', uid, 'experiments'), orderBy('createdAt', 'desc')),
         (snap) => {
-          if (!snap.empty) {
-            const loaded: ExperimentScenario[] = snap.docs.map((docSnap) => {
-              const d = docSnap.data();
-              return {
-                id: d.id,
-                question: d.question,
-                title: d.title,
-                domain: d.domain,
-                summary: d.summary,
-                predictions: d.predictions || [],
-                parameters: d.parameters || [],
-                outcomeExplanation: d.outcomeExplanation || [],
-                realWorldApplications: d.realWorldApplications || [],
-                chartSeries: d.chartSeries || [],
-                isAiGenerated: d.isAiGenerated,
-              };
-            });
-            setState((prev) => ({ ...prev, experiments: loaded }));
-          }
+          const loaded: ExperimentScenario[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: d.id,
+              question: d.question,
+              title: d.title,
+              domain: d.domain,
+              summary: d.summary,
+              predictions: d.predictions || [],
+              parameters: d.parameters || [],
+              outcomeExplanation: d.outcomeExplanation || [],
+              realWorldApplications: d.realWorldApplications || [],
+              chartSeries: d.chartSeries || [],
+              isAiGenerated: d.isAiGenerated,
+            };
+          });
+          setState((prev) => ({ ...prev, experiments: loaded }));
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/experiments`)
+        (error) => reportCloudError(error, OperationType.LIST, `users/${uid}/experiments`)
       );
 
-      // Collaborative Study Rooms (open rooms visible to signed-in learners)
       const unsubOpenRooms = onSnapshot(
         query(collection(db, 'studyRooms'), where('visibility', '==', 'open')),
         (snap) => {
@@ -744,7 +722,7 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
             };
           });
         },
-        (error) => handleFirestoreError(error, OperationType.LIST, 'studyRooms')
+        (error) => reportCloudError(error, OperationType.LIST, 'studyRooms')
       );
 
       unsubscribes = [
@@ -760,18 +738,21 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => {
+      cancelled = true;
       unsubAuth();
       unsubscribes.forEach((u) => u());
     };
-  }, []);
+  }, [reportCloudError, seedInitialCloudWorkspace]);
+
+  const activeRoom = state.solutions.find((s) => s.id === activeSolutionId);
+  const activeRoomId = activeRoom?.id;
+  const activeRoomPublished = Boolean(activeRoom?.isPublished);
 
   // Listen to real-time contributions for the currently selected published Study Room
   useEffect(() => {
-    if (!user) return;
-    const activeRoom = state.solutions.find((s) => s.id === activeSolutionId);
-    if (!activeRoom || !activeRoom.isPublished) return;
+    if (!user || !user.emailVerified || !activeRoomId || !activeRoomPublished) return;
 
-    const roomId = toSafeDocId(activeRoom.id, 'room');
+    const roomId = toSafeDocId(activeRoomId, 'room');
     const contribPath = `studyRooms/${roomId}/contributions`;
 
     const unsubContrib = onSnapshot(
@@ -793,55 +774,46 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
           ...prev,
           solutionContributions: {
             ...prev.solutionContributions,
-            [activeRoom.id]: items,
+            [activeRoomId]: items,
           },
         }));
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, contribPath)
+      (error) => reportCloudError(error, OperationType.LIST, contribPath)
     );
 
     return () => unsubContrib();
-  }, [user, activeSolutionId, state.solutions.length]);
+  }, [user, activeRoomId, activeRoomPublished, reportCloudError]);
 
-  const completeAndLogFocusMinutes = (minutes: number) => {
-    const cleanMinutes = Math.max(1, Math.min(240, Math.round(minutes)));
-    const currentTopic = focusTopicRef.current || 'General Study';
-    const currentUser = userRef.current;
+  const completeAndLogFocusMinutes = useCallback(
+    (minutes: number) => {
+      const currentTopic = focusTopicRef.current || 'General Study';
+      const currentUser = userRef.current;
+      const { nextState, session } = logFocusMinutesInState(
+        stateRef.current,
+        minutes,
+        currentTopic
+      );
 
-    const session: FocusSession = {
-      id: `fs-${Date.now()}`,
-      durationMinutes: cleanMinutes,
-      focusTopic: currentTopic,
-      createdAt: new Date().toISOString(),
-    };
+      setState(nextState);
+      setLastCompletedFocusNotice(
+        `Logged ${session.durationMinutes} min focus sprint${currentTopic ? ` on ${currentTopic}` : ''}.`
+      );
 
-    setState((prev) => ({
-      ...prev,
-      focusSessions: [session, ...prev.focusSessions],
-      weeklyActivity: prev.weeklyActivity.map((day, idx) =>
-        idx === prev.weeklyActivity.length - 1
-          ? { ...day, minutes: day.minutes + cleanMinutes }
-          : day
-      ),
-    }));
+      if (currentUser?.emailVerified) {
+        void syncFocusSessionToCloud(currentUser.uid, session);
+      }
+    },
+    [syncFocusSessionToCloud]
+  );
 
-    setLastCompletedFocusNotice(
-      `Logged ${cleanMinutes} min focus sprint${currentTopic ? ` on ${currentTopic}` : ''}.`
-    );
-
-    if (currentUser) {
-      syncFocusSessionToCloud(currentUser.uid, session).catch(() => {});
-    }
-  };
-
-  // Accurate wall-clock countdown interval for Focus Timer
+  // Accurate wall-clock countdown interval (1s cadence, isolated in FocusTimerContext)
   useEffect(() => {
     if (!focusRunning) {
       timerTargetEndRef.current = null;
       return;
     }
 
-    timerTargetEndRef.current = Date.now() + focusRemainingSeconds * 1000;
+    timerTargetEndRef.current = Date.now() + focusRemainingRef.current * 1000;
 
     const interval = window.setInterval(() => {
       if (!timerTargetEndRef.current) return;
@@ -856,46 +828,46 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
         completeAndLogFocusMinutes(completedMinutes);
         setFocusRemainingSeconds(completedMinutes * 60);
       }
-    }, 250);
+    }, 500);
 
     return () => window.clearInterval(interval);
-  }, [focusRunning]);
+  }, [focusRunning, completeAndLogFocusMinutes]);
 
-  const setFocusDuration = (minutes: number) => {
+  const setFocusDuration = useCallback((minutes: number) => {
     const clamped = Math.max(1, Math.min(120, Math.round(minutes) || 25));
     setFocusRunning(false);
     setFocusDurationMinutes(clamped);
     setFocusRemainingSeconds(clamped * 60);
     setLastCompletedFocusNotice(null);
-  };
+  }, []);
 
-  const toggleFocusTimer = () => {
+  const toggleFocusTimer = useCallback(() => {
     setLastCompletedFocusNotice(null);
     setFocusRunning((prev) => !prev);
-  };
+  }, []);
 
-  const resetFocusTimer = () => {
+  const resetFocusTimer = useCallback(() => {
     setFocusRunning(false);
-    setFocusRemainingSeconds(focusDurationMinutes * 60);
+    setFocusRemainingSeconds(focusDurationRef.current * 60);
     setLastCompletedFocusNotice(null);
-  };
+  }, []);
 
-  const logFocusSessionEarly = () => {
-    const elapsedSeconds = focusDurationMinutes * 60 - focusRemainingSeconds;
+  const logFocusSessionEarly = useCallback(() => {
+    const elapsedSeconds = focusDurationRef.current * 60 - focusRemainingRef.current;
     const elapsedMinutes = Math.max(1, Math.round(elapsedSeconds / 60));
     setFocusRunning(false);
-    setFocusRemainingSeconds(focusDurationMinutes * 60);
+    setFocusRemainingSeconds(focusDurationRef.current * 60);
     completeAndLogFocusMinutes(elapsedMinutes);
-  };
+  }, [completeAndLogFocusMinutes]);
 
-  const dismissFocusNotice = () => setLastCompletedFocusNotice(null);
+  const dismissFocusNotice = useCallback(() => setLastCompletedFocusNotice(null), []);
 
-  const navigateToQuiz = (topic: string) => {
+  const navigateToQuiz = useCallback((topic: string) => {
     setActiveQuizTopic(topic);
     setActiveScreen('quiz');
-  };
+  }, []);
 
-  const navigateToSimplifier = (topic: string) => {
+  const navigateToSimplifier = useCallback((topic: string) => {
     const matching = stateRef.current.lessons.find(
       (l) => l.topic.toLowerCase() === topic.toLowerCase()
     );
@@ -904,65 +876,37 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
     }
     setSimplifierDraftTopic(topic);
     setActiveScreen('simplifier');
-  };
+  }, []);
 
-  const navigateToSolutionWithTopic = (topic: string) => {
+  const navigateToSolutionWithTopic = useCallback((topic: string) => {
     setSolutionDraftTopic(topic);
     setActiveScreen('solutions');
-  };
+  }, []);
 
-  const addLesson = (lesson: SimplifiedLesson) => {
-    const prevSnapshot = stateRef.current;
-    const hasMastery = prevSnapshot.masteryRecords.some(
-      (m) => m.topic.toLowerCase() === lesson.topic.toLowerCase()
-    );
+  const addLesson = useCallback(
+    (lesson: SimplifiedLesson) => {
+      const { nextState, createdMastery, saved } = addLessonToState(stateRef.current, lesson);
+      if (saved) {
+        setEphemeralLesson(null);
+        setState(nextState);
+        setActiveLessonId(lesson.id);
 
-    const createdMastery: TopicMasteryRecord | null = hasMastery
-      ? null
-      : {
-          topic: lesson.topic,
-          subject: lesson.subject,
-          correctAnswers: 0,
-          attemptedQuestions: 0,
-          previousScorePercent: null,
-          latestScorePercent: null,
-          lastPracticedAt: null,
-          strongConcepts: [],
-          weakConcepts: [],
-          revisionAdvice:
-            'Newly simplified topic. Take a quick quiz in Quiz Arena to measure your understanding.',
-        };
-
-    setState((prev) => {
-      const nextLessons = prev.settings.autoSaveLessons
-        ? [lesson, ...prev.lessons.filter((l) => l.id !== lesson.id)]
-        : [lesson, ...prev.lessons];
-
-      const stillMissingMastery = !prev.masteryRecords.some(
-        (m) => m.topic.toLowerCase() === lesson.topic.toLowerCase()
-      );
-      const nextMastery =
-        createdMastery && stillMissingMastery
-          ? [createdMastery, ...prev.masteryRecords]
-          : prev.masteryRecords;
-
-      return {
-        ...prev,
-        lessons: nextLessons,
-        masteryRecords: nextMastery,
-      };
-    });
-    setActiveLessonId(lesson.id);
-
-    if (user) {
-      syncLessonToCloud(user.uid, lesson).catch(() => {});
-      if (createdMastery) {
-        syncMasteryToCloud(user.uid, createdMastery).catch(() => {});
+        const currentUser = userRef.current;
+        if (currentUser?.emailVerified) {
+          void syncLessonToCloud(currentUser.uid, lesson);
+          if (createdMastery) {
+            void syncMasteryToCloud(currentUser.uid, createdMastery);
+          }
+        }
+      } else {
+        setEphemeralLesson(lesson);
+        setActiveLessonId(lesson.id);
       }
-    }
-  };
+    },
+    [syncLessonToCloud, syncMasteryToCloud]
+  );
 
-  const saveQuizBank = (bank: QuizBank) => {
+  const saveQuizBank = useCallback((bank: QuizBank) => {
     setState((prev) => ({
       ...prev,
       quizBanks: {
@@ -970,591 +914,550 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
         [bank.topic]: bank,
       },
     }));
-  };
+  }, []);
 
-  const recordQuizCompletion = (input: QuizSubmissionInput): QuizAttempt => {
-    const scorePercent =
-      calculateMasteryPercentage(input.correctCount, input.totalQuestions) ??
-      Math.round((input.correctCount / Math.max(input.totalQuestions, 1)) * 100);
-
-    const attempt: QuizAttempt = {
-      id: `att-${Date.now()}`,
-      topic: input.topic,
-      correctCount: input.correctCount,
-      totalQuestions: input.totalQuestions,
-      scorePercent,
-      timestamp: new Date().toISOString(),
-    };
-
-    const classification = classifyMastery(scorePercent, input.totalQuestions);
-
-    let revisionAdvice =
-      'Great momentum! Explore advanced questions or test assumptions in Experiment Lab.';
-    if (classification === 'Needs Improvement') {
-      revisionAdvice = `Priority focus needed (${scorePercent}%). Revisit ${input.topic} in Concept Simplifier before retaking.`;
-    } else if (classification === 'Developing') {
-      revisionAdvice = `Solid start (${scorePercent}%). Review missed concepts and retake the quiz to reach 70%+ Good Understanding.`;
-    } else if (classification === 'Good Understanding') {
-      revisionAdvice = `Good grasp (${scorePercent}%). Target remaining weak spots to push past 85% Strong Understanding.`;
-    } else if (classification === 'Insufficient Data') {
-      revisionAdvice = 'Complete at least 2 questions on this topic for a reliable mastery score.';
-    }
-
-    const prevSnapshot = stateRef.current;
-    const existingIdx = prevSnapshot.masteryRecords.findIndex(
-      (m) => m.topic.toLowerCase() === input.topic.toLowerCase()
-    );
-    const computedLatest = calculateMasteryPercentage(input.correctCount, input.totalQuestions);
-
-    const updatedMasteryRecord: TopicMasteryRecord =
-      existingIdx >= 0
-        ? {
-            ...prevSnapshot.masteryRecords[existingIdx],
-            subject: input.subject || prevSnapshot.masteryRecords[existingIdx].subject,
-            correctAnswers: input.correctCount,
-            attemptedQuestions: input.totalQuestions,
-            previousScorePercent: prevSnapshot.masteryRecords[existingIdx].latestScorePercent,
-            latestScorePercent: computedLatest,
-            lastPracticedAt: attempt.timestamp,
-            strongConcepts: input.strongConcepts,
-            weakConcepts: input.weakConcepts,
-            revisionAdvice,
-          }
-        : {
-            topic: input.topic,
-            subject: input.subject,
-            correctAnswers: input.correctCount,
-            attemptedQuestions: input.totalQuestions,
-            previousScorePercent: null,
-            latestScorePercent: computedLatest,
-            lastPracticedAt: attempt.timestamp,
-            strongConcepts: input.strongConcepts,
-            weakConcepts: input.weakConcepts,
-            revisionAdvice,
-          };
-
-    setState((prev) => {
-      const idxInPrev = prev.masteryRecords.findIndex(
-        (m) => m.topic.toLowerCase() === input.topic.toLowerCase()
+  const recordQuizCompletion = useCallback(
+    (input: QuizSubmissionInput): QuizAttempt => {
+      const { nextState, attempt, updatedMasteryRecord } = applyQuizCompletionToState(
+        stateRef.current,
+        input
       );
-      let nextMastery: TopicMasteryRecord[];
-      if (idxInPrev >= 0) {
-        nextMastery = [...prev.masteryRecords];
-        nextMastery[idxInPrev] = updatedMasteryRecord;
-      } else {
-        nextMastery = [updatedMasteryRecord, ...prev.masteryRecords];
+      setState(nextState);
+
+      const currentUser = userRef.current;
+      if (currentUser?.emailVerified) {
+        void syncQuizAttemptToCloud(currentUser.uid, attempt);
+        void syncMasteryToCloud(currentUser.uid, updatedMasteryRecord);
       }
 
-      const nextWeekly = prev.weeklyActivity.map((day, idx) =>
-        idx === prev.weeklyActivity.length - 1
-          ? {
-              ...day,
-              minutes: day.minutes + Math.max(5, input.totalQuestions * 2),
-              quizzes: day.quizzes + 1,
-            }
-          : day
-      );
+      return attempt;
+    },
+    [syncMasteryToCloud, syncQuizAttemptToCloud]
+  );
 
-      return {
+  const addExperiment = useCallback(
+    (experiment: ExperimentScenario) => {
+      setState((prev) => ({
         ...prev,
-        quizAttempts: [attempt, ...prev.quizAttempts],
-        masteryRecords: nextMastery,
-        weeklyActivity: nextWeekly,
-      };
-    });
+        experiments: [experiment, ...prev.experiments],
+      }));
 
-    if (user) {
-      syncQuizAttemptToCloud(user.uid, attempt).catch(() => {});
-      syncMasteryToCloud(user.uid, updatedMasteryRecord).catch(() => {});
-    }
-
-    return attempt;
-  };
-
-  const addExperiment = (experiment: ExperimentScenario) => {
-    setState((prev) => ({
-      ...prev,
-      experiments: [experiment, ...prev.experiments],
-    }));
-
-    if (user) {
-      syncExperimentToCloud(user.uid, experiment).catch(() => {});
-    }
-  };
+      const currentUser = userRef.current;
+      if (currentUser?.emailVerified) {
+        void syncExperimentToCloud(currentUser.uid, experiment);
+      }
+    },
+    [syncExperimentToCloud]
+  );
 
   // --- Solution Studio & Study Room Actions ---
 
-  const publishRoomToFirestore = async (room: SolutionProject) => {
-    const firebaseUser = userRef.current;
-    if (!firebaseUser) return;
+  const publishRoomToFirestore = useCallback(
+    async (room: SolutionProject): Promise<boolean> => {
+      const firebaseUser = userRef.current;
+      if (!firebaseUser?.emailVerified) return false;
 
-    const roomId = toSafeDocId(room.id, 'room');
-    const cleanCode =
-      room.roomCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) ||
-      `SB${String(Date.now()).slice(-4)}`;
-    const roomPath = `studyRooms/${roomId}`;
+      const roomId = toSafeDocId(room.id, 'room');
+      const cleanCode =
+        room.roomCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) ||
+        `SB${String(Date.now()).slice(-4)}`;
+      const roomPath = `studyRooms/${roomId}`;
 
-    try {
-      await setDoc(doc(db, 'studyRooms', roomId), {
-        id: roomId,
-        roomCode: cleanCode,
-        ownerUid: firebaseUser.uid,
-        ownerName: (firebaseUser.displayName || stateRef.current.settings.studentName || 'Learner').slice(
-          0,
-          80
-        ),
-        title: room.title.slice(0, 200),
-        domain: room.domain.slice(0, 100),
-        problemStatement: room.problemStatement.slice(0, 1200),
-        targetCommunity: room.targetCommunity.slice(0, 240),
-        constraints: room.constraints.slice(0, 600),
-        ...(room.linkedTopic ? { linkedTopic: room.linkedTopic.slice(0, 160) } : {}),
-        solutionSummary: room.solutionSummary.slice(0, 1800),
-        feasibilityScore: Math.max(0, Math.min(100, Math.round(room.feasibilityScore || 75))),
-        aiIntegrationPlan: room.aiIntegrationPlan.slice(0, 1500),
-        buildPhases: room.buildPhases.slice(0, 10),
-        impactMetrics: room.impactMetrics.slice(0, 10),
-        tasks: room.tasks.slice(0, 20),
-        risks: room.risks.slice(0, 10),
-        visibility: room.visibility === 'invite' ? 'invite' : 'open',
-        memberUids: [],
-        endorseUids: [],
-        isAiGenerated: Boolean(room.isAiGenerated),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, roomPath);
-    }
-  };
-
-  const createSolution = async (solution: SolutionProject, publishToCloud = false) => {
-    const shouldPublish = Boolean(publishToCloud && userRef.current);
-    const enriched: SolutionProject = {
-      ...solution,
-      ownerUid: shouldPublish && userRef.current ? userRef.current.uid : solution.ownerUid,
-      ownerName:
-        shouldPublish && userRef.current?.displayName
-          ? userRef.current.displayName
-          : solution.ownerName,
-      isPublished: shouldPublish,
-    };
-
-    setState((prev) => ({
-      ...prev,
-      solutions: [enriched, ...prev.solutions],
-    }));
-    setActiveSolutionId(enriched.id);
-
-    if (shouldPublish) {
-      await publishRoomToFirestore(enriched);
-    }
-  };
-
-  const publishSolutionToRoom = async (solutionId: string) => {
-    const firebaseUser = userRef.current;
-    if (!firebaseUser) {
-      throw new Error('Sign in with Google to publish and collaborate live in Firestore.');
-    }
-    const target = stateRef.current.solutions.find((s) => s.id === solutionId);
-    if (!target) return;
-
-    const updated: SolutionProject = {
-      ...target,
-      ownerUid: firebaseUser.uid,
-      ownerName: firebaseUser.displayName || stateRef.current.settings.studentName || 'Learner',
-      isPublished: true,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await publishRoomToFirestore(updated);
-
-    setState((prev) => ({
-      ...prev,
-      solutions: prev.solutions.map((s) => (s.id === solutionId ? updated : s)),
-    }));
-  };
-
-  const joinStudyRoomByCode = async (
-    rawCode: string
-  ): Promise<{ ok: boolean; message: string }> => {
-    const code = rawCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (!code) {
-      return { ok: false, message: 'Enter a Study Room code (e.g., BIO4821).' };
-    }
-
-    const localMatch = stateRef.current.solutions.find(
-      (s) => s.roomCode.toUpperCase() === code
-    );
-    if (localMatch && !userRef.current) {
-      setActiveSolutionId(localMatch.id);
-      return { ok: true, message: `Opened local room "${localMatch.title}" (${code}).` };
-    }
-
-    if (!userRef.current) {
-      return {
-        ok: false,
-        message: 'Room code not found locally. Sign in with Google to search and join shared Firestore study rooms.',
-      };
-    }
-
-    try {
-      const q = query(
-        collection(db, 'studyRooms'),
-        where('visibility', '==', 'open'),
-        where('roomCode', '==', code)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        if (localMatch) {
-          setActiveSolutionId(localMatch.id);
-          return { ok: true, message: `Opened room "${localMatch.title}" (${code}).` };
-        }
-        return {
-          ok: false,
-          message: `No open Study Room found with code "${code}".`,
-        };
-      }
-
-      const roomDoc = snap.docs[0];
-      const room = mapRoomDoc(roomDoc.data());
-      const uid = userRef.current.uid;
-
-      if (room.ownerUid !== uid && !room.memberUids.includes(uid)) {
-        const nextMembers = [...room.memberUids, uid].slice(0, 20);
-        await updateDoc(doc(db, 'studyRooms', room.id), {
-          memberUids: nextMembers,
+      try {
+        await setDoc(doc(db, 'studyRooms', roomId), {
+          id: roomId,
+          roomCode: cleanCode,
+          ownerUid: firebaseUser.uid,
+          ownerName: (
+            firebaseUser.displayName ||
+            stateRef.current.settings.studentName ||
+            'Learner'
+          ).slice(0, 80),
+          title: room.title.slice(0, 200),
+          domain: room.domain.slice(0, 100),
+          problemStatement: room.problemStatement.slice(0, 1200),
+          targetCommunity: room.targetCommunity.slice(0, 240),
+          constraints: room.constraints.slice(0, 600),
+          ...(room.linkedTopic ? { linkedTopic: room.linkedTopic.slice(0, 160) } : {}),
+          solutionSummary: room.solutionSummary.slice(0, 1800),
+          feasibilityScore: Math.max(0, Math.min(100, Math.round(room.feasibilityScore || 75))),
+          aiIntegrationPlan: room.aiIntegrationPlan.slice(0, 1500),
+          buildPhases: room.buildPhases.slice(0, 10),
+          impactMetrics: room.impactMetrics.slice(0, 10),
+          tasks: room.tasks.slice(0, 20),
+          risks: room.risks.slice(0, 10),
+          visibility: room.visibility === 'invite' ? 'invite' : 'open',
+          memberUids: [],
+          endorseUids: [],
+          isAiGenerated: Boolean(room.isAiGenerated),
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        room.memberUids = nextMembers;
+        return true;
+      } catch (error) {
+        reportCloudError(error, OperationType.CREATE, roomPath);
+        return false;
+      }
+    },
+    [reportCloudError]
+  );
+
+  const createSolution = useCallback(
+    async (solution: SolutionProject, publishToCloud = false) => {
+      const currentUser = userRef.current;
+      const shouldPublish = Boolean(publishToCloud && currentUser?.emailVerified);
+      const enriched: SolutionProject = {
+        ...solution,
+        ownerUid: shouldPublish && currentUser ? currentUser.uid : solution.ownerUid,
+        ownerName:
+          shouldPublish && currentUser?.displayName
+            ? currentUser.displayName
+            : solution.ownerName,
+        isPublished: false,
+      };
+
+      setState((prev) => ({
+        ...prev,
+        solutions: [enriched, ...prev.solutions],
+      }));
+      setActiveSolutionId(enriched.id);
+
+      if (shouldPublish) {
+        const ok = await publishRoomToFirestore(enriched);
+        if (ok) {
+          setState((prev) => ({
+            ...prev,
+            solutions: prev.solutions.map((s) =>
+              s.id === enriched.id ? { ...s, isPublished: true } : s
+            ),
+          }));
+        }
+      }
+    },
+    [publishRoomToFirestore]
+  );
+
+  const publishSolutionToRoom = useCallback(
+    async (solutionId: string) => {
+      const firebaseUser = userRef.current;
+      if (!firebaseUser) {
+        throw new Error('Sign in with Google to publish and collaborate live in Firestore.');
+      }
+      if (!firebaseUser.emailVerified) {
+        throw new Error('Verify your Google email address before publishing a live Study Room.');
+      }
+      const target = stateRef.current.solutions.find((s) => s.id === solutionId);
+      if (!target) return;
+
+      const updated: SolutionProject = {
+        ...target,
+        ownerUid: firebaseUser.uid,
+        ownerName: firebaseUser.displayName || stateRef.current.settings.studentName || 'Learner',
+        isPublished: true,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const ok = await publishRoomToFirestore(updated);
+      if (!ok) {
+        throw new Error('Unable to publish Study Room to Firestore. Please try again.');
       }
 
       setState((prev) => ({
         ...prev,
-        solutions: [room, ...prev.solutions.filter((s) => s.id !== room.id)],
+        solutions: prev.solutions.map((s) => (s.id === solutionId ? updated : s)),
       }));
-      setActiveSolutionId(room.id);
-      return { ok: true, message: `Joined "${room.title}" (${room.roomCode}).` };
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'studyRooms');
-      return { ok: false, message: 'Unable to join room.' };
-    }
-  };
+    },
+    [publishRoomToFirestore]
+  );
 
-  const toggleSolutionTask = async (solutionId: string, taskId: string) => {
-    const target = stateRef.current.solutions.find((s) => s.id === solutionId);
-    if (!target) return;
+  const toggleRoomVisibility = useCallback(
+    async (solutionId: string) => {
+      const target = stateRef.current.solutions.find((s) => s.id === solutionId);
+      if (!target) return;
+      const nextVisibility = target.visibility === 'open' ? 'invite' : 'open';
 
-    const actorName =
-      userRef.current?.displayName || stateRef.current.settings.studentName || 'Learner';
-    const nextTasks = target.tasks.map((t) => {
-      if (t.id !== taskId) return t;
-      const nextCompleted = !t.completed;
-      return {
-        ...t,
-        completed: nextCompleted,
-        assigneeName: nextCompleted ? actorName : t.assigneeName,
+      setState((prev) => ({
+        ...prev,
+        solutions: prev.solutions.map((s) =>
+          s.id === solutionId
+            ? { ...s, visibility: nextVisibility, updatedAt: new Date().toISOString() }
+            : s
+        ),
+      }));
+
+      const firebaseUser = userRef.current;
+      if (firebaseUser?.emailVerified && target.isPublished && target.ownerUid === firebaseUser.uid) {
+        const roomId = toSafeDocId(target.id, 'room');
+        try {
+          await updateDoc(doc(db, 'studyRooms', roomId), {
+            visibility: nextVisibility,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          reportCloudError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
+        }
+      }
+    },
+    [reportCloudError]
+  );
+
+  const joinStudyRoomByCode = useCallback(
+    async (rawCode: string): Promise<{ ok: boolean; message: string }> => {
+      const code = rawCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!code) {
+        return { ok: false, message: 'Enter a Study Room code (e.g., BIO4821).' };
+      }
+
+      const localMatch = stateRef.current.solutions.find(
+        (s) => s.roomCode.toUpperCase() === code
+      );
+      if (localMatch && !userRef.current) {
+        setActiveSolutionId(localMatch.id);
+        return { ok: true, message: `Opened local room "${localMatch.title}" (${code}).` };
+      }
+
+      const firebaseUser = userRef.current;
+      if (!firebaseUser) {
+        return {
+          ok: false,
+          message:
+            'Room code not found locally. Sign in with Google to search and join shared Firestore study rooms.',
+        };
+      }
+
+      try {
+        const q = query(
+          collection(db, 'studyRooms'),
+          where('visibility', '==', 'open'),
+          where('roomCode', '==', code)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          if (localMatch) {
+            setActiveSolutionId(localMatch.id);
+            return { ok: true, message: `Opened room "${localMatch.title}" (${code}).` };
+          }
+          return {
+            ok: false,
+            message: `No open Study Room found with code "${code}". Ask the host to set room visibility to Open Study Room.`,
+          };
+        }
+
+        const roomDoc = snap.docs[0];
+        const room = mapRoomDoc(roomDoc.data());
+        const uid = firebaseUser.uid;
+
+        if (firebaseUser.emailVerified && room.ownerUid !== uid && !room.memberUids.includes(uid)) {
+          const nextMembers = [...room.memberUids, uid].slice(0, 20);
+          await updateDoc(doc(db, 'studyRooms', room.id), {
+            memberUids: nextMembers,
+            updatedAt: serverTimestamp(),
+          });
+          room.memberUids = nextMembers;
+        }
+
+        setState((prev) => ({
+          ...prev,
+          solutions: [room, ...prev.solutions.filter((s) => s.id !== room.id)],
+        }));
+        setActiveSolutionId(room.id);
+        return { ok: true, message: `Joined "${room.title}" (${room.roomCode}).` };
+      } catch (error) {
+        reportCloudError(error, OperationType.LIST, 'studyRooms');
+        return { ok: false, message: 'Unable to join room right now.' };
+      }
+    },
+    [reportCloudError]
+  );
+
+  const toggleSolutionTask = useCallback(
+    async (solutionId: string, taskId: string) => {
+      const firebaseUser = userRef.current;
+      const actorName =
+        firebaseUser?.displayName || stateRef.current.settings.studentName || 'Learner';
+      const { nextState, target, nextTasks } = toggleSolutionTaskInState(
+        stateRef.current,
+        solutionId,
+        taskId,
+        actorName
+      );
+      if (!target || !nextTasks) return;
+
+      setState(nextState);
+
+      if (firebaseUser?.emailVerified && target.isPublished) {
+        const roomId = toSafeDocId(target.id, 'room');
+        try {
+          await updateDoc(doc(db, 'studyRooms', roomId), {
+            tasks: nextTasks.slice(0, 20),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          reportCloudError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
+        }
+      }
+    },
+    [reportCloudError]
+  );
+
+  const endorseSolution = useCallback(
+    async (solutionId: string) => {
+      const firebaseUser = userRef.current;
+      const actorId = firebaseUser?.uid || 'guest';
+      const { nextState, target, nextEndorse } = endorseSolutionInState(
+        stateRef.current,
+        solutionId,
+        actorId
+      );
+      if (!target || !nextEndorse) return;
+
+      setState(nextState);
+
+      if (firebaseUser?.emailVerified && target.isPublished) {
+        const roomId = toSafeDocId(target.id, 'room');
+        try {
+          await updateDoc(doc(db, 'studyRooms', roomId), {
+            endorseUids: nextEndorse,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          reportCloudError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
+        }
+      }
+    },
+    [reportCloudError]
+  );
+
+  const addSolutionContribution = useCallback(
+    async (solutionId: string, kind: SolutionContribution['kind'], text: string) => {
+      const cleanText = text.trim();
+      if (!cleanText) return;
+      const target = stateRef.current.solutions.find((s) => s.id === solutionId);
+      if (!target) return;
+
+      const firebaseUser = userRef.current;
+      const contribId = createUniqueId('c');
+      const entry: SolutionContribution = {
+        id: contribId,
+        roomId: target.id,
+        authorUid: firebaseUser?.uid || 'guest',
+        authorName: firebaseUser?.displayName || stateRef.current.settings.studentName || 'Learner',
+        kind,
+        text: cleanText.slice(0, 1500),
+        createdAt: new Date().toISOString(),
       };
-    });
 
-    setState((prev) => ({
-      ...prev,
-      solutions: prev.solutions.map((s) =>
-        s.id === solutionId
-          ? { ...s, tasks: nextTasks, updatedAt: new Date().toISOString() }
-          : s
-      ),
-    }));
+      setState((prev) => ({
+        ...prev,
+        solutionContributions: {
+          ...prev.solutionContributions,
+          [solutionId]: [...(prev.solutionContributions[solutionId] || []), entry],
+        },
+      }));
 
-    if (userRef.current && target.isPublished) {
-      const roomId = toSafeDocId(target.id, 'room');
-      try {
-        await updateDoc(doc(db, 'studyRooms', roomId), {
-          tasks: nextTasks.slice(0, 20),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
+      if (firebaseUser?.emailVerified && target.isPublished) {
+        const roomId = toSafeDocId(target.id, 'room');
+        const path = `studyRooms/${roomId}/contributions/${contribId}`;
+        try {
+          await setDoc(doc(db, 'studyRooms', roomId, 'contributions', contribId), {
+            id: contribId,
+            roomId,
+            roomOwnerUid: target.ownerUid,
+            roomVisibility: target.visibility,
+            authorUid: firebaseUser.uid,
+            authorName: entry.authorName.slice(0, 80),
+            kind,
+            text: entry.text,
+            createdAt: serverTimestamp(),
+          });
+        } catch (error) {
+          reportCloudError(error, OperationType.CREATE, path);
+        }
       }
-    }
-  };
+    },
+    [reportCloudError]
+  );
 
-  const endorseSolution = async (solutionId: string) => {
-    const target = stateRef.current.solutions.find((s) => s.id === solutionId);
-    if (!target) return;
+  const applySolutionIteration = useCallback(
+    async (
+      solutionId: string,
+      patch: Partial<
+        Pick<
+          SolutionProject,
+          | 'solutionSummary'
+          | 'feasibilityScore'
+          | 'aiIntegrationPlan'
+          | 'buildPhases'
+          | 'impactMetrics'
+          | 'tasks'
+          | 'risks'
+        >
+      >,
+      iterationNote: string
+    ) => {
+      const target = stateRef.current.solutions.find((s) => s.id === solutionId);
+      if (!target) return;
 
-    const actorId = userRef.current?.uid || 'guest';
-    const alreadyEndorsed = target.endorseUids.includes(actorId);
-    const nextEndorse = alreadyEndorsed
-      ? target.endorseUids.filter((id) => id !== actorId)
-      : [...target.endorseUids, actorId].slice(0, 25);
+      const updated: SolutionProject = {
+        ...target,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+      };
 
-    setState((prev) => ({
-      ...prev,
-      solutions: prev.solutions.map((s) =>
-        s.id === solutionId
-          ? { ...s, endorseUids: nextEndorse, updatedAt: new Date().toISOString() }
-          : s
-      ),
-    }));
+      setState((prev) => ({
+        ...prev,
+        solutions: prev.solutions.map((s) => (s.id === solutionId ? updated : s)),
+      }));
 
-    if (userRef.current && target.isPublished) {
-      const roomId = toSafeDocId(target.id, 'room');
-      try {
-        await updateDoc(doc(db, 'studyRooms', roomId), {
-          endorseUids: nextEndorse,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
+      const firebaseUser = userRef.current;
+      if (
+        firebaseUser?.emailVerified &&
+        target.isPublished &&
+        target.ownerUid === firebaseUser.uid
+      ) {
+        const roomId = toSafeDocId(target.id, 'room');
+        try {
+          await updateDoc(doc(db, 'studyRooms', roomId), {
+            solutionSummary: updated.solutionSummary.slice(0, 1800),
+            feasibilityScore: Math.max(0, Math.min(100, Math.round(updated.feasibilityScore || 75))),
+            aiIntegrationPlan: updated.aiIntegrationPlan.slice(0, 1500),
+            buildPhases: updated.buildPhases.slice(0, 10),
+            impactMetrics: updated.impactMetrics.slice(0, 10),
+            tasks: updated.tasks.slice(0, 20),
+            risks: updated.risks.slice(0, 10),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          reportCloudError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
+        }
       }
-    }
-  };
 
-  const addSolutionContribution = async (
-    solutionId: string,
-    kind: SolutionContribution['kind'],
-    text: string
-  ) => {
-    const cleanText = text.trim();
-    if (!cleanText) return;
-    const target = stateRef.current.solutions.find((s) => s.id === solutionId);
-    if (!target) return;
-
-    const firebaseUser = userRef.current;
-    const contribId = `c-${Date.now()}`;
-    const entry: SolutionContribution = {
-      id: contribId,
-      roomId: target.id,
-      authorUid: firebaseUser?.uid || 'guest',
-      authorName: firebaseUser?.displayName || stateRef.current.settings.studentName || 'Learner',
-      kind,
-      text: cleanText.slice(0, 1500),
-      createdAt: new Date().toISOString(),
-    };
-
-    setState((prev) => ({
-      ...prev,
-      solutionContributions: {
-        ...prev.solutionContributions,
-        [solutionId]: [...(prev.solutionContributions[solutionId] || []), entry],
-      },
-    }));
-
-    if (firebaseUser && target.isPublished) {
-      const roomId = toSafeDocId(target.id, 'room');
-      const path = `studyRooms/${roomId}/contributions/${contribId}`;
-      try {
-        await setDoc(doc(db, 'studyRooms', roomId, 'contributions', contribId), {
-          id: contribId,
-          roomId,
-          roomOwnerUid: target.ownerUid,
-          roomVisibility: target.visibility,
-          authorUid: firebaseUser.uid,
-          authorName: entry.authorName.slice(0, 80),
-          kind,
-          text: entry.text,
-          createdAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, path);
+      if (iterationNote.trim()) {
+        await addSolutionContribution(solutionId, 'ai-critique', iterationNote.trim());
       }
-    }
-  };
-
-  const applySolutionIteration = async (
-    solutionId: string,
-    patch: Partial<
-      Pick<
-        SolutionProject,
-        | 'solutionSummary'
-        | 'feasibilityScore'
-        | 'aiIntegrationPlan'
-        | 'buildPhases'
-        | 'impactMetrics'
-        | 'tasks'
-        | 'risks'
-      >
-    >,
-    iterationNote: string
-  ) => {
-    const target = stateRef.current.solutions.find((s) => s.id === solutionId);
-    if (!target) return;
-
-    const updated: SolutionProject = {
-      ...target,
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    };
-
-    setState((prev) => ({
-      ...prev,
-      solutions: prev.solutions.map((s) => (s.id === solutionId ? updated : s)),
-    }));
-
-    if (
-      userRef.current &&
-      target.isPublished &&
-      target.ownerUid === userRef.current.uid
-    ) {
-      const roomId = toSafeDocId(target.id, 'room');
-      try {
-        await updateDoc(doc(db, 'studyRooms', roomId), {
-          solutionSummary: updated.solutionSummary.slice(0, 1800),
-          feasibilityScore: Math.max(0, Math.min(100, Math.round(updated.feasibilityScore || 75))),
-          aiIntegrationPlan: updated.aiIntegrationPlan.slice(0, 1500),
-          buildPhases: updated.buildPhases.slice(0, 10),
-          impactMetrics: updated.impactMetrics.slice(0, 10),
-          tasks: updated.tasks.slice(0, 20),
-          risks: updated.risks.slice(0, 10),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `studyRooms/${roomId}`);
-      }
-    }
-
-    if (iterationNote.trim()) {
-      await addSolutionContribution(solutionId, 'ai-critique', iterationNote.trim());
-    }
-  };
+    },
+    [addSolutionContribution, reportCloudError]
+  );
 
   // --- Study Tutor Actions ---
 
-  const createTutorThread = (
-    roleId: TutorRoleId = 'socratic',
-    modelId: TutorModelId = 'gemini-4-hydrogen'
-  ): TutorThread => {
-    const now = new Date().toISOString();
-    const thread: TutorThread = {
-      id: `thread-${Date.now()}`,
-      title: 'New Study Session',
-      roleId,
-      modelId,
-      useSearchGrounding: false,
-      messages: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    setState((prev) => ({
-      ...prev,
-      tutorThreads: [thread, ...prev.tutorThreads],
-    }));
-    setActiveTutorThreadId(thread.id);
-    if (user) {
-      syncTutorThreadToCloud(user.uid, thread).catch(() => {});
-    }
-    return thread;
-  };
+  const createTutorThread = useCallback(
+    (
+      roleId: TutorRoleId = 'socratic',
+      modelId: TutorModelId = 'gemini-4-hydrogen'
+    ): TutorThread => {
+      const thread = createTutorThreadRecord(roleId, modelId);
+      setState((prev) => ({
+        ...prev,
+        tutorThreads: [thread, ...prev.tutorThreads],
+      }));
+      setActiveTutorThreadId(thread.id);
 
-  const updateTutorThreadConfig = (
-    threadId: string,
-    patch: Partial<Pick<TutorThread, 'roleId' | 'modelId' | 'useSearchGrounding' | 'title'>>
-  ) => {
-    const existing = stateRef.current.tutorThreads.find((t) => t.id === threadId);
-    const updatedThread: TutorThread | null = existing
-      ? {
-          ...existing,
-          ...patch,
-          updatedAt: new Date().toISOString(),
-        }
-      : null;
+      const currentUser = userRef.current;
+      if (currentUser?.emailVerified) {
+        void syncTutorThreadToCloud(currentUser.uid, thread);
+      }
+      return thread;
+    },
+    [syncTutorThreadToCloud]
+  );
 
-    setState((prev) => ({
-      ...prev,
-      tutorThreads: prev.tutorThreads.map((t) =>
-        t.id === threadId && updatedThread ? updatedThread : t
-      ),
-    }));
+  const updateTutorThreadConfig = useCallback(
+    (
+      threadId: string,
+      patch: Partial<Pick<TutorThread, 'roleId' | 'modelId' | 'useSearchGrounding' | 'title'>>
+    ) => {
+      const existing = stateRef.current.tutorThreads.find((t) => t.id === threadId);
+      const updatedThread: TutorThread | null = existing
+        ? {
+            ...existing,
+            ...patch,
+            updatedAt: new Date().toISOString(),
+          }
+        : null;
 
-    if (user && updatedThread) {
-      syncTutorThreadToCloud(user.uid, updatedThread).catch(() => {});
-    }
-  };
+      setState((prev) => ({
+        ...prev,
+        tutorThreads: prev.tutorThreads.map((t) =>
+          t.id === threadId && updatedThread ? updatedThread : t
+        ),
+      }));
 
-  const appendTutorTurn = (
-    threadId: string,
-    userMessage: TutorMessage,
-    assistantMessage: TutorMessage
-  ) => {
-    const existing = stateRef.current.tutorThreads.find((t) => t.id === threadId);
-    const nextTitle = existing
-      ? existing.messages.length === 0
-        ? userMessage.text.slice(0, 48).trim() || existing.title
-        : existing.title
-      : 'Study Session';
-    const updatedThread: TutorThread | null = existing
-      ? {
-          ...existing,
-          title: nextTitle,
-          messages: [...existing.messages, userMessage, assistantMessage].slice(-60),
-          updatedAt: new Date().toISOString(),
-        }
-      : null;
+      const currentUser = userRef.current;
+      if (currentUser?.emailVerified && updatedThread) {
+        void syncTutorThreadToCloud(currentUser.uid, updatedThread);
+      }
+    },
+    [syncTutorThreadToCloud]
+  );
 
-    setState((prev) => ({
-      ...prev,
-      tutorThreads: prev.tutorThreads.map((t) =>
-        t.id === threadId && updatedThread ? updatedThread : t
-      ),
-    }));
+  const appendTutorTurn = useCallback(
+    (threadId: string, userMessage: TutorMessage, assistantMessage: TutorMessage) => {
+      const { nextState, updatedThread } = appendTutorTurnInState(
+        stateRef.current,
+        threadId,
+        userMessage,
+        assistantMessage
+      );
+      if (!updatedThread) return;
 
-    if (user && updatedThread) {
-      syncTutorThreadToCloud(user.uid, updatedThread).catch(() => {});
-    }
-  };
+      setState(nextState);
+      const currentUser = userRef.current;
+      if (currentUser?.emailVerified) {
+        void syncTutorThreadToCloud(currentUser.uid, updatedThread);
+      }
+    },
+    [syncTutorThreadToCloud]
+  );
 
-  const updateSettings = (patch: Partial<StudentSettings>) => {
-    const mergedSettings: StudentSettings = {
-      ...stateRef.current.settings,
-      ...patch,
-    };
+  const updateSettings = useCallback(
+    (patch: Partial<StudentSettings>) => {
+      const mergedSettings: StudentSettings = {
+        ...stateRef.current.settings,
+        ...patch,
+      };
 
-    setState((prev) => ({
-      ...prev,
-      settings: { ...prev.settings, ...patch },
-    }));
+      setState((prev) => ({
+        ...prev,
+        settings: { ...prev.settings, ...patch },
+      }));
 
-    if (user) {
-      const uid = user.uid;
-      const safeName = mergedSettings.studentName.trim() || 'Learner';
-      const safeFocus = mergedSettings.academicFocus.trim() || 'STEM Foundations';
-      updateDoc(doc(db, 'users', uid), {
-        displayName: safeName.slice(0, 80),
-        academicFocus: safeFocus.slice(0, 120),
-        defaultLevel: mergedSettings.defaultLevel,
-        defaultLanguage: mergedSettings.defaultLanguage.slice(0, 40),
-        weeklyQuizGoal: Math.max(1, Math.min(100, Math.round(mergedSettings.weeklyQuizGoal))),
-        showInstantFeedback: Boolean(mergedSettings.showInstantFeedback),
-        autoSaveLessons: Boolean(mergedSettings.autoSaveLessons),
-        updatedAt: serverTimestamp(),
-      }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`));
-    }
-  };
+      const currentUser = userRef.current;
+      if (currentUser?.emailVerified) {
+        const uid = currentUser.uid;
+        const safeName = mergedSettings.studentName.trim() || 'Learner';
+        const safeFocus = mergedSettings.academicFocus.trim() || 'STEM Foundations';
+        updateDoc(doc(db, 'users', uid), {
+          displayName: safeName.slice(0, 80),
+          academicFocus: safeFocus.slice(0, 120),
+          defaultLevel: mergedSettings.defaultLevel,
+          defaultLanguage: mergedSettings.defaultLanguage.slice(0, 40),
+          weeklyQuizGoal: Math.max(1, Math.min(100, Math.round(mergedSettings.weeklyQuizGoal))),
+          showInstantFeedback: Boolean(mergedSettings.showInstantFeedback),
+          autoSaveLessons: Boolean(mergedSettings.autoSaveLessons),
+          updatedAt: serverTimestamp(),
+        }).catch((error) => reportCloudError(error, OperationType.UPDATE, `users/${uid}`));
+      }
+    },
+    [reportCloudError]
+  );
 
-  const resetAllData = () => {
-    const fresh: PersistedState = {
-      lessons: INITIAL_LESSONS,
-      quizBanks: INITIAL_QUIZ_BANKS,
-      masteryRecords: INITIAL_TOPIC_MASTERY,
-      quizAttempts: INITIAL_QUIZ_ATTEMPTS,
-      experiments: SAMPLE_EXPERIMENTS,
-      weeklyActivity: INITIAL_WEEKLY_ACTIVITY,
-      focusSessions: INITIAL_FOCUS_SESSIONS,
-      tutorThreads: INITIAL_TUTOR_THREADS,
-      solutions: INITIAL_SOLUTIONS,
-      solutionContributions: INITIAL_SOLUTION_CONTRIBUTIONS,
-      settings: INITIAL_SETTINGS,
-    };
+  const resetAllData = useCallback(() => {
+    const fresh = createInitialSampleState();
     setState(fresh);
+    setEphemeralLesson(null);
     setActiveLessonId(INITIAL_LESSONS[0].id);
     setActiveQuizTopic('Photosynthesis & Calvin Cycle');
     setActiveTutorThreadId(INITIAL_TUTOR_THREADS[0].id);
     setActiveSolutionId(INITIAL_SOLUTIONS[0].id);
-    localStorage.removeItem(STORAGE_KEY);
-  };
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
@@ -1563,75 +1466,131 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
       setAuthError(msg);
       throw err;
     }
-  };
+  }, []);
 
-  const signOutUser = async () => {
+  const signOutUser = useCallback(async () => {
     setAuthError(null);
     await signOut(auth);
-  };
+    resetAllData();
+  }, [resetAllData]);
+
+  const focusTimerValue = useMemo<FocusTimerContextValue>(
+    () => ({
+      focusDurationMinutes,
+      focusRemainingSeconds,
+      focusRunning,
+      focusTopic,
+      lastCompletedFocusNotice,
+      setFocusDuration,
+      setFocusTopic,
+      toggleFocusTimer,
+      resetFocusTimer,
+      logFocusSessionEarly,
+      dismissFocusNotice,
+    }),
+    [
+      focusDurationMinutes,
+      focusRemainingSeconds,
+      focusRunning,
+      focusTopic,
+      lastCompletedFocusNotice,
+      setFocusDuration,
+      toggleFocusTimer,
+      resetFocusTimer,
+      logFocusSessionEarly,
+      dismissFocusNotice,
+    ]
+  );
+
+  const studyValue = useMemo<StudyContextValue>(
+    () => ({
+      ...state,
+      activeScreen,
+      setActiveScreen,
+      activeQuizTopic,
+      setActiveQuizTopic,
+      activeLessonId,
+      setActiveLessonId,
+      ephemeralLesson,
+      simplifierDraftTopic,
+      setSimplifierDraftTopic,
+      activeSolutionId,
+      setActiveSolutionId,
+      solutionDraftTopic,
+      setSolutionDraftTopic,
+      navigateToQuiz,
+      navigateToSimplifier,
+      navigateToSolutionWithTopic,
+      addLesson,
+      saveQuizBank,
+      recordQuizCompletion,
+      addExperiment,
+      updateSettings,
+      resetAllData,
+      cloudRooms,
+      createSolution,
+      publishSolutionToRoom,
+      toggleRoomVisibility,
+      joinStudyRoomByCode,
+      toggleSolutionTask,
+      endorseSolution,
+      applySolutionIteration,
+      addSolutionContribution,
+      activeTutorThreadId,
+      setActiveTutorThreadId,
+      createTutorThread,
+      updateTutorThreadConfig,
+      appendTutorTurn,
+      authReady,
+      user,
+      syncStatus,
+      authError,
+      signInWithGoogle,
+      signOutUser,
+    }),
+    [
+      state,
+      activeScreen,
+      activeQuizTopic,
+      activeLessonId,
+      ephemeralLesson,
+      simplifierDraftTopic,
+      activeSolutionId,
+      solutionDraftTopic,
+      navigateToQuiz,
+      navigateToSimplifier,
+      navigateToSolutionWithTopic,
+      addLesson,
+      saveQuizBank,
+      recordQuizCompletion,
+      addExperiment,
+      updateSettings,
+      resetAllData,
+      cloudRooms,
+      createSolution,
+      publishSolutionToRoom,
+      toggleRoomVisibility,
+      joinStudyRoomByCode,
+      toggleSolutionTask,
+      endorseSolution,
+      applySolutionIteration,
+      addSolutionContribution,
+      activeTutorThreadId,
+      createTutorThread,
+      updateTutorThreadConfig,
+      appendTutorTurn,
+      authReady,
+      user,
+      syncStatus,
+      authError,
+      signInWithGoogle,
+      signOutUser,
+    ]
+  );
 
   return (
-    <StudyContext.Provider
-      value={{
-        ...state,
-        activeScreen,
-        setActiveScreen,
-        activeQuizTopic,
-        setActiveQuizTopic,
-        activeLessonId,
-        setActiveLessonId,
-        simplifierDraftTopic,
-        setSimplifierDraftTopic,
-        activeSolutionId,
-        setActiveSolutionId,
-        solutionDraftTopic,
-        setSolutionDraftTopic,
-        navigateToQuiz,
-        navigateToSimplifier,
-        navigateToSolutionWithTopic,
-        addLesson,
-        saveQuizBank,
-        recordQuizCompletion,
-        addExperiment,
-        updateSettings,
-        resetAllData,
-
-        cloudRooms,
-        createSolution,
-        publishSolutionToRoom,
-        joinStudyRoomByCode,
-        toggleSolutionTask,
-        endorseSolution,
-        applySolutionIteration,
-        addSolutionContribution,
-
-        focusDurationMinutes,
-        focusRemainingSeconds,
-        focusRunning,
-        focusTopic,
-        lastCompletedFocusNotice,
-        setFocusDuration,
-        setFocusTopic,
-        toggleFocusTimer,
-        resetFocusTimer,
-        logFocusSessionEarly,
-        dismissFocusNotice,
-
-        activeTutorThreadId,
-        setActiveTutorThreadId,
-        createTutorThread,
-        updateTutorThreadConfig,
-        appendTutorTurn,
-
-        authReady,
-        user,
-        syncStatus,
-        authError,
-        signInWithGoogle,
-        signOutUser,
-      }}
-    >
-      {children}
+    <StudyContext.Provider value={studyValue}>
+      <FocusTimerContext.Provider value={focusTimerValue}>{children}</FocusTimerContext.Provider>
     </StudyContext.Provider>
   );
 }
@@ -1640,6 +1599,14 @@ export function useStudy() {
   const ctx = useContext(StudyContext);
   if (!ctx) {
     throw new Error('useStudy must be used inside StudyProvider');
+  }
+  return ctx;
+}
+
+export function useFocusTimer() {
+  const ctx = useContext(FocusTimerContext);
+  if (!ctx) {
+    throw new Error('useFocusTimer must be used inside StudyProvider');
   }
   return ctx;
 }

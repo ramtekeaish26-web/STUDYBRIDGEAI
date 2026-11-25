@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Check, Pause, Play, RotateCcw, Timer, X } from 'lucide-react';
-import { useStudy } from '../context/StudyContext';
+import { useFocusTimer, useStudy } from '../context/StudyContext';
+import { computeTodayFocusMinutes } from '../utils/studyState';
 
 const PRESET_MINUTES = [15, 25, 45];
 
@@ -11,21 +12,20 @@ function formatClock(totalSeconds: number): string {
 }
 
 export function FocusTimerWidget() {
+  const { focusSessions, lessons } = useStudy();
   const {
     focusDurationMinutes,
     focusRemainingSeconds,
     focusRunning,
     focusTopic,
-    focusSessions,
     lastCompletedFocusNotice,
-    lessons,
     setFocusDuration,
     setFocusTopic,
     toggleFocusTimer,
     resetFocusTimer,
     logFocusSessionEarly,
     dismissFocusNotice,
-  } = useStudy();
+  } = useFocusTimer();
 
   const [customDraft, setCustomDraft] = useState<string>(String(focusDurationMinutes));
 
@@ -33,9 +33,7 @@ export function FocusTimerWidget() {
   const elapsedSeconds = Math.max(0, totalSeconds - focusRemainingSeconds);
   const progressPct = totalSeconds > 0 ? Math.min(100, Math.round((elapsedSeconds / totalSeconds) * 100)) : 0;
 
-  const totalLoggedToday = focusSessions
-    .slice(0, 6)
-    .reduce((sum, s) => sum + s.durationMinutes, 0);
+  const totalLoggedToday = computeTodayFocusMinutes(focusSessions);
 
   const handleApplyCustom = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,7 +60,14 @@ export function FocusTimerWidget() {
         <div className="font-mono-tabular text-2xl font-semibold tracking-tight text-[#1e2436]">
           {formatClock(focusRemainingSeconds)}
         </div>
-        <div className="mt-2 h-2 w-full overflow-hidden rounded-xl bg-[#dfe2ea]">
+        <div
+          role="progressbar"
+          aria-label="Focus session progress"
+          aria-valuenow={progressPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="mt-2 h-2 w-full overflow-hidden rounded-xl bg-[#dfe2ea]"
+        >
           <div
             className="h-full rounded-xl bg-[#6366f1] transition-all duration-300"
             style={{ width: `${progressPct}%` }}
@@ -78,6 +83,7 @@ export function FocusTimerWidget() {
             <button
               key={mins}
               type="button"
+              aria-pressed={isSelected}
               onClick={() => {
                 setFocusDuration(mins);
                 setCustomDraft(String(mins));
@@ -168,7 +174,11 @@ export function FocusTimerWidget() {
       </div>
 
       {lastCompletedFocusNotice && (
-        <div className="neu-inset-sm flex items-start justify-between gap-2 p-2.5 text-[11px] text-[#047857]">
+        <div
+          role="status"
+          aria-live="polite"
+          className="neu-inset-sm flex items-start justify-between gap-2 p-2.5 text-[11px] text-[#047857]"
+        >
           <span>{lastCompletedFocusNotice}</span>
           <button
             type="button"

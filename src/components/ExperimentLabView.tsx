@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Compass,
@@ -11,10 +11,12 @@ import {
 } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import { ExperimentParameter, ExperimentScenario } from '../types/study';
+import { postJson } from '../utils/apiClient';
 import {
   computeSimulatedChartSeries,
   sanitizeExperimentParameters,
 } from '../utils/experimentMath';
+import { createUniqueId } from '../utils/studyState';
 
 const EXAMPLE_QUESTIONS = [
   "What if Earth's surface gravity doubled from 9.8 m/s² to 19.6 m/s²?",
@@ -30,6 +32,11 @@ export function ExperimentLabView() {
   const [paramOverrides, setParamOverrides] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   const activeExperiment: ExperimentScenario | undefined =
     experiments.find((e) => e.id === selectedId) ?? experiments[0];
@@ -53,6 +60,10 @@ export function ExperimentLabView() {
   };
 
   const executeExperimentQuery = async (cleanQuestion: string, clearInput: boolean) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setError(null);
 
@@ -65,22 +76,18 @@ export function ExperimentLabView() {
           }))
         : [];
 
-      const res = await fetch('/api/experiment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJson<{ experiment?: Partial<ExperimentScenario> }>(
+        '/api/experiment',
+        {
           question: cleanQuestion,
           assumptions: currentAssumptions,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to run experiment.');
-      }
+        },
+        { signal: controller.signal }
+      );
 
       const exp = data.experiment || {};
       const created: ExperimentScenario = {
-        id: `exp-${Date.now()}`,
+        id: createUniqueId('exp'),
         question: cleanQuestion,
         title: exp.title || cleanQuestion,
         domain: exp.domain || 'Interdisciplinary Systems',
@@ -104,11 +111,14 @@ export function ExperimentLabView() {
         setQuestionInput('');
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(
         err instanceof Error ? err.message : 'Unable to generate experiment right now.'
       );
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        setLoading(false);
+      }
     }
   };
 
@@ -380,6 +390,7 @@ export function ExperimentLabView() {
                         max={param.max}
                         step={param.step}
                         value={val}
+                        aria-valuetext={`${val} ${param.unit}`.trim()}
                         onChange={(e) =>
                           setParamOverrides((prev) => ({
                             ...prev,

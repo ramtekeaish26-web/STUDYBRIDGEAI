@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Cloud, Download, LogIn, LogOut, RotateCcw } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import { LearningLevel } from '../types/study';
@@ -19,27 +19,49 @@ export function SettingsView() {
     signOutUser,
   } = useStudy();
 
+  const [nameDraft, setNameDraft] = useState<string>(settings.studentName);
+  const [focusDraft, setFocusDraft] = useState<string>(settings.academicFocus);
+  const [goalDraft, setGoalDraft] = useState<number>(settings.weeklyQuizGoal);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setNameDraft(settings.studentName);
+    setFocusDraft(settings.academicFocus);
+    setGoalDraft(settings.weeklyQuizGoal);
+  }, [settings.studentName, settings.academicFocus, settings.weeklyQuizGoal]);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showNotice = (msg: string) => {
+    setSavedNotice(msg);
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = window.setTimeout(() => setSavedNotice(null), 2500);
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    const safeName = settings.studentName.trim() || 'Learner';
-    const safeFocus = settings.academicFocus.trim() || 'STEM Foundations';
-    const safeGoal = Math.min(30, Math.max(1, Math.round(settings.weeklyQuizGoal || 1)));
-    if (
-      safeName !== settings.studentName ||
-      safeFocus !== settings.academicFocus ||
-      safeGoal !== settings.weeklyQuizGoal
-    ) {
-      updateSettings({
-        studentName: safeName,
-        academicFocus: safeFocus,
-        weeklyQuizGoal: safeGoal,
-      });
-    }
-    setSavedNotice('Preferences saved.');
-    setTimeout(() => setSavedNotice(null), 2500);
+    const safeName = nameDraft.trim() || 'Learner';
+    const safeFocus = focusDraft.trim() || 'STEM Foundations';
+    const safeGoal = Math.min(30, Math.max(1, Math.round(goalDraft || 1)));
+    setNameDraft(safeName);
+    setFocusDraft(safeFocus);
+    setGoalDraft(safeGoal);
+    updateSettings({
+      studentName: safeName,
+      academicFocus: safeFocus,
+      weeklyQuizGoal: safeGoal,
+    });
+    showNotice('Preferences saved.');
   };
 
   const handleExportReport = () => {
@@ -58,8 +80,10 @@ export function SettingsView() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `studybridge-progress-${settings.studentName.toLowerCase().replace(/\s+/g, '-')}.json`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
 
   return (
@@ -88,8 +112,8 @@ export function SettingsView() {
               <input
                 id="settings-name"
                 type="text"
-                value={settings.studentName}
-                onChange={(e) => updateSettings({ studentName: e.target.value })}
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
                 className="neu-input mt-2 w-full px-4 py-2.5 text-sm"
               />
             </div>
@@ -104,8 +128,8 @@ export function SettingsView() {
               <input
                 id="settings-focus"
                 type="text"
-                value={settings.academicFocus}
-                onChange={(e) => updateSettings({ academicFocus: e.target.value })}
+                value={focusDraft}
+                onChange={(e) => setFocusDraft(e.target.value)}
                 className="neu-input mt-2 w-full px-4 py-2.5 text-sm"
               />
             </div>
@@ -170,11 +194,9 @@ export function SettingsView() {
                 type="number"
                 min={1}
                 max={30}
-                value={settings.weeklyQuizGoal}
+                value={goalDraft}
                 onChange={(e) =>
-                  updateSettings({
-                    weeklyQuizGoal: Math.min(30, Math.max(1, Math.round(Number(e.target.value) || 1))),
-                  })
+                  setGoalDraft(Math.min(30, Math.max(1, Math.round(Number(e.target.value) || 1))))
                 }
                 className="neu-input font-mono-tabular mt-2 w-full px-4 py-2.5 text-sm"
               />
@@ -230,7 +252,11 @@ export function SettingsView() {
               Save Preferences
             </button>
             {savedNotice && (
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-[#047857]">
+              <span
+                role="status"
+                aria-live="polite"
+                className="flex items-center gap-1.5 text-xs font-semibold text-[#047857]"
+              >
                 <CheckCircle2 className="h-4 w-4" />
                 <span>{savedNotice}</span>
               </span>

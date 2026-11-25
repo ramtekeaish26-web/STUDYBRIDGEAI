@@ -629,7 +629,27 @@ service cloud.firestore {
           ||
           (
             (existing().visibility == 'open' || request.auth.uid in existing().memberUids)
-            && incoming().diff(existing()).affectedKeys().hasOnly(['tasks', 'endorseUids', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['tasks', 'updatedAt'])
+          )
+          ||
+          (
+            (existing().visibility == 'open' || request.auth.uid in existing().memberUids)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['endorseUids', 'updatedAt'])
+            && (
+              (
+                !(request.auth.uid in existing().endorseUids)
+                && incoming().endorseUids.hasAll(existing().endorseUids)
+                && request.auth.uid in incoming().endorseUids
+                && incoming().endorseUids.size() == existing().endorseUids.size() + 1
+              )
+              ||
+              (
+                (request.auth.uid in existing().endorseUids)
+                && existing().endorseUids.hasAll(incoming().endorseUids)
+                && !(request.auth.uid in incoming().endorseUids)
+                && incoming().endorseUids.size() + 1 == existing().endorseUids.size()
+              )
+            )
           )
         );
       allow delete: if isValidId(roomId)
@@ -647,7 +667,8 @@ service cloud.firestore {
         allow list: if isSignedIn()
           && (resource.data.roomVisibility == 'open'
             || resource.data.authorUid == request.auth.uid
-            || resource.data.roomOwnerUid == request.auth.uid);
+            || resource.data.roomOwnerUid == request.auth.uid
+            || request.auth.uid in get(/databases/$(database)/documents/studyRooms/$(roomId)).data.memberUids);
         allow create: if isValidId(roomId)
           && isValidId(contributionId)
           && isVerifiedUser()

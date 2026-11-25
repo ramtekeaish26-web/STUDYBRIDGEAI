@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   BookOpen,
@@ -27,7 +27,9 @@ import {
   SolutionRisk,
   SolutionTask,
 } from '../types/study';
+import { postJson } from '../utils/apiClient';
 import { classifyMastery } from '../utils/mastery';
+import { createUniqueId, generateRoomCode } from '../utils/studyState';
 
 const SOLUTION_TEMPLATES = [
   {
@@ -56,15 +58,7 @@ const SOLUTION_TEMPLATES = [
   },
 ];
 
-function generateRoomCode(): string {
-  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  const prefix =
-    letters[Math.floor(Math.random() * letters.length)] +
-    letters[Math.floor(Math.random() * letters.length)] +
-    letters[Math.floor(Math.random() * letters.length)];
-  const digits = String(Math.floor(1000 + Math.random() * 9000));
-  return `${prefix}${digits}`;
-}
+function removeUnusedPlaceholder() {}
 
 export function SolutionStudioView() {
   const {
@@ -82,6 +76,7 @@ export function SolutionStudioView() {
     signInWithGoogle,
     createSolution,
     publishSolutionToRoom,
+    toggleRoomVisibility,
     joinStudyRoomByCode,
     toggleSolutionTask,
     endorseSolution,
@@ -109,6 +104,15 @@ export function SolutionStudioView() {
   const [iterating, setIterating] = useState<boolean>(false);
   const [publishing, setPublishing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const generateAbortRef = useRef<AbortController | null>(null);
+  const iterateAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      generateAbortRef.current?.abort();
+      iterateAbortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (solutionDraftTopic) {
@@ -144,6 +148,10 @@ export function SolutionStudioView() {
       return;
     }
 
+    generateAbortRef.current?.abort();
+    const controller = new AbortController();
+    generateAbortRef.current = controller;
+
     setGenerating(true);
     setError(null);
     setRoomFeedback(null);
@@ -161,21 +169,29 @@ export function SolutionStudioView() {
       : undefined;
 
     try {
-      const res = await fetch('/api/solution', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJson<{
+        solution?: {
+          title?: string;
+          domain?: string;
+          solutionSummary?: string;
+          feasibilityScore?: number;
+          aiIntegrationPlan?: string;
+          buildPhases?: SolutionBuildPhase[];
+          impactMetrics?: SolutionImpactMetric[];
+          tasks?: Array<{ title?: string }>;
+          risks?: SolutionRisk[];
+        };
+      }>(
+        '/api/solution',
+        {
           problemStatement: problemStatement.trim(),
           targetCommunity: targetCommunity.trim(),
           constraints: constraints.trim(),
           linkedTopic: linkedTopic.trim() || undefined,
           linkedContext,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate AI solution blueprint.');
-      }
+        },
+        { signal: controller.signal }
+      );
 
       const raw = data.solution || {};
       const now = new Date().toISOString();
@@ -183,14 +199,14 @@ export function SolutionStudioView() {
       const tasks: SolutionTask[] =
         rawTasks.length > 0
           ? rawTasks.slice(0, 8).map((t, idx) => ({
-              id: `task-${Date.now()}-${idx}`,
+              id: createUniqueId(`task-${idx}`),
               title: String(t?.title || `Implementation step ${idx + 1}`),
               completed: false,
               assigneeName: 'Open for peer',
             }))
           : [
               {
-                id: `task-${Date.now()}-0`,
+                id: createUniqueId('task-0'),
                 title: 'Validate baseline assumptions with target users',
                 completed: false,
                 assigneeName: 'Open for peer',
@@ -206,7 +222,7 @@ export function SolutionStudioView() {
       const risks: SolutionRisk[] = Array.isArray(raw.risks) ? raw.risks : [];
 
       const created: SolutionProject = {
-        id: `room-${Date.now()}`,
+        id: createUniqueId('room'),
         roomCode: generateRoomCode(),
         ownerUid: user?.uid || 'guest',
         ownerName: user?.displayName || settings.studentName || 'Learner',
@@ -245,11 +261,14 @@ export function SolutionStudioView() {
           : `Created local Solution Blueprint (${created.roomCode}).`
       );
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(
         err instanceof Error ? err.message : 'Unable to generate solution blueprint right now.'
       );
     } finally {
-      setGenerating(false);
+      if (generateAbortRef.current === controller) {
+        setGenerating(false);
+      }
     }
   };
 
@@ -282,14 +301,28 @@ export function SolutionStudioView() {
   const handleIterateWithAi = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeSolution || !iterationInput.trim()) return;
+    iterateAbortRef.current?.abort();
+    const controller = new AbortController();
+    iterateAbortRef.current = controller;
+
     setIterating(true);
     setError(null);
 
     try {
-      const res = await fetch('/api/solution/iterate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJson<{
+        iteration?: {
+          solutionSummary?: string;
+          feasibilityScore?: number;
+          aiIntegrationPlan?: string;
+          iterationNote?: string;
+          buildPhases?: SolutionBuildPhase[];
+          impactMetrics?: SolutionImpactMetric[];
+          tasks?: Array<{ title?: string }>;
+          risks?: SolutionRisk[];
+        };
+      }>(
+        '/api/solution/iterate',
+        {
           solution: {
             title: activeSolution.title,
             problemStatement: activeSolution.problemStatement,
@@ -299,17 +332,14 @@ export function SolutionStudioView() {
             feasibilityScore: activeSolution.feasibilityScore,
           },
           feedback: iterationInput.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to iterate solution with AI.');
-      }
+        },
+        { signal: controller.signal }
+      );
 
       const iter = data.iteration || {};
       const nextTasks: SolutionTask[] = Array.isArray(iter.tasks)
-        ? iter.tasks.slice(0, 8).map((t: { title?: string }, idx: number) => ({
-            id: `task-iter-${Date.now()}-${idx}`,
+        ? iter.tasks.slice(0, 8).map((t, idx) => ({
+            id: createUniqueId(`task-iter-${idx}`),
             title: String(t?.title || `Updated task ${idx + 1}`),
             completed: false,
             assigneeName: 'Open for peer',
@@ -345,9 +375,12 @@ export function SolutionStudioView() {
       setIterationInput('');
       setRoomFeedback('AI critique applied and logged to the build feed.');
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Unable to refine solution right now.');
     } finally {
-      setIterating(false);
+      if (iterateAbortRef.current === controller) {
+        setIterating(false);
+      }
     }
   };
 
@@ -481,7 +514,11 @@ export function SolutionStudioView() {
         </div>
 
         {roomFeedback && (
-          <div className="neu-inset-sm flex items-center gap-2 px-4 py-2.5 text-xs text-[#047857]">
+          <div
+            role="status"
+            aria-live="polite"
+            className="neu-inset-sm flex items-center gap-2 px-4 py-2.5 text-xs text-[#047857]"
+          >
             <CheckCircle2 className="h-4 w-4 shrink-0" />
             <span>{roomFeedback}</span>
           </div>
@@ -641,6 +678,7 @@ export function SolutionStudioView() {
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
+                aria-pressed={visibility === 'open'}
                 onClick={() => setVisibility('open')}
                 className={`min-h-[40px] px-3 py-2 text-xs font-semibold ${
                   visibility === 'open'
@@ -652,6 +690,7 @@ export function SolutionStudioView() {
               </button>
               <button
                 type="button"
+                aria-pressed={visibility === 'invite'}
                 onClick={() => setVisibility('invite')}
                 className={`min-h-[40px] px-3 py-2 text-xs font-semibold ${
                   visibility === 'invite'
@@ -659,7 +698,7 @@ export function SolutionStudioView() {
                     : 'neu-btn text-[#3d4558]'
                 }`}
               >
-                Invite-Code Only
+                Private (Owner Only)
               </button>
             </div>
 
@@ -752,6 +791,7 @@ export function SolutionStudioView() {
 
                     <button
                       type="button"
+                      aria-pressed={hasEndorsed}
                       onClick={() => endorseSolution(activeSolution.id)}
                       className={`flex min-h-[40px] items-center gap-1.5 px-3.5 py-2 text-xs font-semibold whitespace-nowrap ${
                         hasEndorsed
@@ -764,6 +804,20 @@ export function SolutionStudioView() {
                         Endorse ({activeSolution.endorseUids.length})
                       </span>
                     </button>
+
+                    {(!activeSolution.isPublished ||
+                      activeSolution.ownerUid === (user?.uid || 'guest')) && (
+                      <button
+                        type="button"
+                        onClick={() => toggleRoomVisibility(activeSolution.id)}
+                        className="neu-btn flex min-h-[40px] items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#3d4558] whitespace-nowrap"
+                      >
+                        <Globe className="h-3.5 w-3.5 text-[#6366f1]" />
+                        <span>
+                          {activeSolution.visibility === 'open' ? 'Open Room' : 'Private Room'}
+                        </span>
+                      </button>
+                    )}
 
                     {!activeSolution.isPublished && (
                       user ? (
@@ -826,7 +880,14 @@ export function SolutionStudioView() {
                         {activeSolution.feasibilityScore}%
                       </span>
                     </div>
-                    <div className="mt-2 h-2.5 w-full overflow-hidden rounded-xl bg-[#dfe2ea]">
+                    <div
+                      role="progressbar"
+                      aria-label="Solution feasibility score"
+                      aria-valuenow={activeSolution.feasibilityScore}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      className="mt-2 h-2.5 w-full overflow-hidden rounded-xl bg-[#dfe2ea]"
+                    >
                       <div
                         className="h-full rounded-xl bg-[#6366f1] transition-all duration-300"
                         style={{ width: `${activeSolution.feasibilityScore}%` }}
@@ -925,6 +986,7 @@ export function SolutionStudioView() {
                       <button
                         key={task.id}
                         type="button"
+                        aria-pressed={task.completed}
                         onClick={() => toggleSolutionTask(activeSolution.id, task.id)}
                         className={`flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-2.5 text-left ${
                           task.completed ? 'neu-inset-sm' : 'neu-btn'

@@ -11,6 +11,8 @@ import {
 import { useStudy } from '../context/StudyContext';
 import { TUTOR_MODELS, TUTOR_ROLES } from '../data/sampleData';
 import { TutorMessage, TutorModelId, TutorRoleId } from '../types/study';
+import { postJson } from '../utils/apiClient';
+import { createUniqueId } from '../utils/studyState';
 import { sanitizeCitations } from '../utils/urlSafety';
 
 const STARTER_PROMPTS = [
@@ -38,10 +40,15 @@ export function StudyTutorView() {
   const [sending, setSending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeThread?.messages.length, sending]);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   const handleRoleChange = (roleId: TutorRoleId) => {
     if (!activeThread) return;
@@ -76,12 +83,16 @@ export function StudyTutorView() {
     const promptText = (textOverride ?? input).trim();
     if (!promptText) return;
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setSending(true);
     setError(null);
     if (!textOverride) setInput('');
 
     const userMsg: TutorMessage = {
-      id: `tm-${Date.now()}-u`,
+      id: createUniqueId('tm-u'),
       role: 'user',
       text: promptText,
       createdAt: new Date().toISOString(),
@@ -98,10 +109,13 @@ export function StudyTutorView() {
       .join(', ');
 
     try {
-      const res = await fetch('/api/tutor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJson<{
+        reply: string;
+        modelUsed?: TutorModelId;
+        citations?: unknown;
+      }>(
+        '/api/tutor',
+        {
           messages: historyForApi,
           roleId: activeThread.roleId,
           modelId: activeThread.modelId,
@@ -109,16 +123,12 @@ export function StudyTutorView() {
           learnerContext: weakTopicsSummary
             ? `Student needs extra clarity on: ${weakTopicsSummary}.`
             : undefined,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Unable to get response from Study Tutor.');
-      }
+        },
+        { signal: controller.signal }
+      );
 
       const assistantMsg: TutorMessage = {
-        id: `tm-${Date.now()}-m`,
+        id: createUniqueId('tm-m'),
         role: 'model',
         text: data.reply,
         modelId: data.modelUsed,
@@ -128,10 +138,13 @@ export function StudyTutorView() {
 
       appendTutorTurn(activeThread.id, userMsg, assistantMsg);
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Study Tutor request failed.');
       if (!textOverride) setInput(promptText);
     } finally {
-      setSending(false);
+      if (abortRef.current === controller) {
+        setSending(false);
+      }
     }
   };
 
@@ -177,6 +190,7 @@ export function StudyTutorView() {
                   <button
                     key={role.id}
                     type="button"
+                    aria-pressed={selected}
                     onClick={() => handleRoleChange(role.id)}
                     className={`p-3 text-left ${
                       selected ? 'neu-btn-active' : 'neu-btn'
@@ -375,7 +389,7 @@ export function StudyTutorView() {
             )}
 
             {sending && (
-              <div className="flex justify-start">
+              <div role="status" aria-live="polite" className="flex justify-start">
                 <div className="neu-raised-sm flex items-center gap-2.5 px-4 py-3 text-xs text-[#5a6378]">
                   <Loader2 className="h-4 w-4 animate-spin text-[#6366f1]" />
                   <span>Thinking with {activeThread?.useSearchGrounding ? 'Google Search + Gemini 4 Hydrogen' : currentModel.label}...</span>

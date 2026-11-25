@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Activity,
   BookOpen,
@@ -52,6 +52,17 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
     signInWithGoogle,
     signOutUser,
   } = useStudy();
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCloseMobile();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mobileOpen, onCloseMobile]);
 
   const overallMastery = calculateOverallMastery(masteryRecords);
 
@@ -144,7 +155,14 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
               {overallMastery !== null ? `${overallMastery}%` : '—'}
             </span>
           </div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded-xl bg-[#dfe2ea] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.08)]">
+          <div
+            role="progressbar"
+            aria-label="Overall mastery progress"
+            aria-valuenow={overallMastery ?? 0}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="mt-2 h-2 w-full overflow-hidden rounded-xl bg-[#dfe2ea] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.08)]"
+          >
             <div
               className="h-full rounded-xl bg-[#6366f1] transition-all duration-300"
               style={{ width: `${overallMastery ?? 0}%` }}
@@ -172,9 +190,19 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
                   <p className="truncate text-xs font-semibold text-[#1e2436]">
                     {user.displayName || settings.studentName}
                   </p>
-                  <p className="flex items-center gap-1 text-[11px] text-[#047857]">
+                  <p
+                    className={`flex items-center gap-1 text-[11px] ${
+                      syncStatus === 'error' ? 'text-[#b91c1c]' : 'text-[#047857]'
+                    }`}
+                  >
                     <Cloud className="h-3 w-3 shrink-0" />
-                    <span>{syncStatus === 'syncing' ? 'Syncing...' : 'Cloud Synced'}</span>
+                    <span>
+                      {syncStatus === 'syncing'
+                        ? 'Syncing...'
+                        : syncStatus === 'error'
+                        ? 'Sync issue'
+                        : 'Cloud Synced'}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -224,7 +252,12 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
 
       {/* Mobile & Tablet Drawer */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation menu"
+          className="fixed inset-0 z-50 flex lg:hidden"
+        >
           <div
             className="fixed inset-0 bg-[#1e2436]/25 backdrop-blur-[2px]"
             onClick={onCloseMobile}

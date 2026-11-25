@@ -1,6 +1,6 @@
 {
   "name": "STUDYBRIDGE",
-  "description": "Learn smarter. Understand deeper. Grow faster. An AI-powered educational platform for concept simplification, interactive quizzes, learning gap detection, and what-if experimentation.",
+  "description": "Learn smarter. Understand deeper. Grow faster. An AI-powered educational platform where students learn through personalized concept simplification, test recall with adaptive quizzes and gap detection, explore interactive what-if experiments, collaborate in live Study Rooms, and build meaningful real-world solutions using AI.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

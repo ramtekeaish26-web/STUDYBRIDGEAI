@@ -16,8 +16,10 @@ import {
 } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import { LearningLevel, SimplifiedLesson } from '../types/study';
+import { postJson } from '../utils/apiClient';
 import { extractTextFromFile } from '../utils/fileExtract';
 import { downloadLessonAsPdf } from '../utils/pdfExport';
+import { createUniqueId } from '../utils/studyState';
 import { sanitizeCitations } from '../utils/urlSafety';
 
 const LEVELS: LearningLevel[] = ['Beginner', 'Intermediate', 'Advanced'];
@@ -43,6 +45,7 @@ export function ConceptSimplifierView() {
     lessons,
     activeLessonId,
     setActiveLessonId,
+    ephemeralLesson,
     simplifierDraftTopic,
     setSimplifierDraftTopic,
     settings,
@@ -60,6 +63,15 @@ export function ConceptSimplifierView() {
   const [downloadedPdf, setDownloadedPdf] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setLevel(settings.defaultLevel);
+  }, [settings.defaultLevel]);
+
+  useEffect(() => {
+    setLanguage(settings.defaultLanguage);
+  }, [settings.defaultLanguage]);
 
   useEffect(() => {
     if (simplifierDraftTopic) {
@@ -67,8 +79,15 @@ export function ConceptSimplifierView() {
     }
   }, [simplifierDraftTopic]);
 
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
   const currentLesson =
-    lessons.find((l) => l.id === activeLessonId) ?? lessons[0] ?? null;
+    (ephemeralLesson && ephemeralLesson.id === activeLessonId ? ephemeralLesson : null) ??
+    lessons.find((l) => l.id === activeLessonId) ??
+    lessons[0] ??
+    null;
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -97,32 +116,31 @@ export function ConceptSimplifierView() {
       return;
     }
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setError(null);
 
     try {
-      const res = await fetch('/api/simplify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJson<{ lesson: Partial<SimplifiedLesson> }>(
+        '/api/simplify',
+        {
           topic: topic.trim(),
           level,
           language,
           notes: notes.trim(),
           useSearchGrounding,
-        }),
-      });
+        },
+        { signal: controller.signal }
+      );
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate explanation.');
-      }
-
-      const payload = data.lesson;
+      const payload = data.lesson || {};
       const newLesson: SimplifiedLesson = {
-        id: `lesson-${Date.now()}`,
-        topic: topic.trim() || payload.title,
-        title: payload.title || topic.trim(),
+        id: createUniqueId('lesson'),
+        topic: topic.trim() || payload.title || 'Structured Lesson',
+        title: payload.title || topic.trim() || 'Structured Lesson',
         subject: payload.subject || 'General Study',
         level,
         language,
@@ -142,9 +160,12 @@ export function ConceptSimplifierView() {
       addLesson(newLesson);
       setSimplifierDraftTopic('');
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Unable to generate lesson right now.');
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        setLoading(false);
+      }
     }
   };
 
@@ -257,6 +278,7 @@ export function ConceptSimplifierView() {
                     <button
                       key={lvl}
                       type="button"
+                      aria-pressed={active}
                       onClick={() => setLevel(lvl)}
                       className={`min-h-[42px] px-3 py-2 text-xs font-semibold whitespace-nowrap ${
                         active

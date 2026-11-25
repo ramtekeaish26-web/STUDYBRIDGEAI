@@ -26,21 +26,22 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(
+export function buildFirestoreErrorInfo(
   error: unknown,
   operationType: OperationType,
   path: string | null
-): never {
-  const errInfo: FirestoreErrorInfo = {
+): FirestoreErrorInfo {
+  const currentUser = auth?.currentUser;
+  return {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: currentUser?.uid,
+      email: currentUser?.email,
+      emailVerified: currentUser?.emailVerified,
+      isAnonymous: currentUser?.isAnonymous,
+      tenantId: currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
+        currentUser?.providerData?.map((provider) => ({
           providerId: provider.providerId,
           email: provider.email,
         })) || [],
@@ -48,6 +49,27 @@ export function handleFirestoreError(
     operationType,
     path,
   };
+}
+
+export function formatFirestoreErrorMessage(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  console.error('Firestore Error: ', JSON.stringify(buildFirestoreErrorInfo(error, operationType, path)));
+  if (raw.includes('permission-denied') || raw.includes('PERMISSION_DENIED')) {
+    return 'Cloud sync permission denied. Make sure your Google account email is verified and you have access to this workspace.';
+  }
+  return `Cloud sync failed (${operationType} ${path || 'workspace'}): ${raw}`;
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
   const serialized = JSON.stringify(errInfo);
   console.error('Firestore Error: ', serialized);
   throw new Error(serialized);

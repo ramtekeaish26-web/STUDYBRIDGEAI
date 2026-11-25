@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -13,11 +13,13 @@ import {
 } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import { LearningLevel, QuizAttempt, QuizBank, QuizQuestion } from '../types/study';
+import { postJson } from '../utils/apiClient';
 import {
   calculateMasteryPercentage,
   classifyMastery,
   getClassificationTheme,
 } from '../utils/mastery';
+import { createUniqueId } from '../utils/studyState';
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -46,6 +48,15 @@ export function QuizArenaView() {
 
   const [generating, setGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setDifficulty(settings.defaultLevel);
+  }, [settings.defaultLevel]);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   const currentBank: QuizBank | undefined = quizBanks[activeQuizTopic];
   const questions: QuizQuestion[] = currentBank?.questions ?? [];
@@ -76,53 +87,51 @@ export function QuizArenaView() {
       return;
     }
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setGenerating(true);
     setError(null);
 
     try {
-      const res = await fetch('/api/quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJson<{
+        subject?: string;
+        questions?: Array<{
+          prompt?: string;
+          options?: unknown[];
+          correctIndex?: number;
+          explanation?: string;
+        }>;
+      }>(
+        '/api/quiz',
+        {
           topic: targetTopic,
           level: difficulty,
           count: questionCount,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate quiz.');
-      }
+        },
+        { signal: controller.signal }
+      );
 
       const generatedQuestions: QuizQuestion[] = (data.questions || [])
-        .filter((q: { prompt?: string; options?: unknown[] }) => q && typeof q.prompt === 'string' && Array.isArray(q.options))
-        .map(
-          (
-            q: {
-              prompt: string;
-              options: string[];
-              correctIndex: number;
-              explanation: string;
-            },
-            idx: number
-          ) => {
-            const opts = q.options.slice(0, 4).map((o) => String(o));
-            while (opts.length < 4) {
-              opts.push(`Option ${opts.length + 1}`);
-            }
-            const parsedIdx = Number(q.correctIndex);
-            const safeCorrectIndex = Number.isFinite(parsedIdx)
-              ? Math.min(Math.max(parsedIdx, 0), opts.length - 1)
-              : 0;
-            return {
-              id: `ai-q-${Date.now()}-${idx}`,
-              prompt: q.prompt,
-              options: opts,
-              correctIndex: safeCorrectIndex,
-              explanation: String(q.explanation || 'Review the lesson explanation for details.'),
-            };
+        .filter((q) => q && typeof q.prompt === 'string' && Array.isArray(q.options))
+        .map((q) => {
+          const opts = (q.options || []).slice(0, 4).map((o) => String(o));
+          while (opts.length < 4) {
+            opts.push(`Option ${opts.length + 1}`);
           }
-        );
+          const parsedIdx = Number(q.correctIndex);
+          const safeCorrectIndex = Number.isFinite(parsedIdx)
+            ? Math.min(Math.max(Math.round(parsedIdx), 0), opts.length - 1)
+            : 0;
+          return {
+            id: createUniqueId('ai-q'),
+            prompt: q.prompt as string,
+            options: opts,
+            correctIndex: safeCorrectIndex,
+            explanation: String(q.explanation || 'Review the lesson explanation for details.'),
+          };
+        });
 
       if (generatedQuestions.length === 0) {
         throw new Error('The AI service returned zero questions. Please try again.');
@@ -141,9 +150,12 @@ export function QuizArenaView() {
       setCustomTopic('');
       resetRunner();
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Unable to generate quiz right now.');
     } finally {
-      setGenerating(false);
+      if (abortRef.current === controller) {
+        setGenerating(false);
+      }
     }
   };
 
@@ -495,7 +507,14 @@ export function QuizArenaView() {
           </div>
 
           {/* Linear Progress Bar */}
-          <div className="h-2.5 w-full overflow-hidden rounded-xl bg-[#dfe2ea] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.08)]">
+          <div
+            role="progressbar"
+            aria-label="Quiz progress"
+            aria-valuenow={currentIndex + 1}
+            aria-valuemin={1}
+            aria-valuemax={questions.length}
+            className="h-2.5 w-full overflow-hidden rounded-xl bg-[#dfe2ea] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.08)]"
+          >
             <div
               className="h-full rounded-xl bg-[#6366f1] transition-all duration-300"
               style={{
@@ -540,6 +559,7 @@ export function QuizArenaView() {
                       key={optIdx}
                       type="button"
                       disabled={isSubmitted}
+                      aria-pressed={isSelected}
                       onClick={() => handleSelectOption(optIdx)}
                       className={`${stateClass} flex min-h-[54px] w-full items-center justify-between gap-3 px-4 py-3.5 text-left`}
                     >
@@ -565,7 +585,7 @@ export function QuizArenaView() {
 
               {/* Feedback & Explanation */}
               {submittedAnswers[currentIndex] && settings.showInstantFeedback && (
-                <div className="neu-inset p-4 sm:p-5">
+                <div role="status" aria-live="polite" className="neu-inset p-4 sm:p-5">
                   <div className="flex items-center gap-2 text-xs font-semibold">
                     {selectedOptions[currentIndex] === currentQuestion.correctIndex ? (
                       <span className="flex items-center gap-1.5 text-[#047857]">

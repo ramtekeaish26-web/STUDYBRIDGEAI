@@ -42,3 +42,52 @@ STUDYBRIDGE is an AI-powered educational platform where students learn through p
    npm run build
    npm start
    ```
+
+## Hackathon Vision & Problem‑Statement Alignment
+
+The **StudyBridge** hackathon brief asks for *"an engaging platform where students can learn, experiment, collaborate, and build meaningful solutions using AI"*.  The current codebase directly addresses each of these goals:
+
+| Hackathon Requirement | How StudyBridge fulfills it |
+|-----------------------|------------------------------|
+| **Learn** – personalized explanations and multi‑turn tutoring | **Concept Simplifier** (src/components/ConceptSimplifierView.tsx) parses uploaded notes, uses Gemini to generate tiered explanations, and exports an offline PDF.  **Study Tutor** (src/components/StudyTutorView.tsx) provides a Gemini‑driven conversational coach with selectable personas. |
+| **Experiment** – interactive what‑if scenarios | **Experiment Lab** (src/components/ExperimentLabView.tsx) lets users adjust assumption sliders, runs the deterministic `computeSimulatedChartSeries` math, and optionally asks Gemini for interpretation of the results. |
+| **Collaborate** – real‑time shared workspaces | **Solution Studio & Study Rooms** (src/components/SolutionStudioView.tsx, src/components/Sidebar.tsx) use Firestore rules to synchronize rooms, task checklists, and AI‑generated solution blueprints among multiple users. |
+| **Build solutions** – AI‑assisted project creation | **Solution Studio** guides users from concept to prototype, calling Gemini for design suggestions, feasibility scoring, and iteration. |
+| **AI‑first experience** – Gemini integration throughout | Gemini is invoked in **Concept Simplifier**, **Study Tutor**, and **Solution Studio** via the server‑side API (`src/utils/apiClient.ts`).  All AI calls are protected by the existing security rules and never expose the API key to the client. |
+
+## Component‑to‑Feature Mapping
+
+| Feature | Primary UI Component(s) |
+|--------|--------------------------|
+| Dashboard | `src/components/DashboardView.tsx` |
+| Concept Simplifier | `src/components/ConceptSimplifierView.tsx` |
+| Quiz Arena | `src/components/QuizArenaView.tsx` |
+| Learning Gap Detector | `src/components/LearningGapDetectorView.tsx` |
+| Experiment Lab | `src/components/ExperimentLabView.tsx` |
+| Solution Studio & Study Rooms | `src/components/SolutionStudioView.tsx`, `src/components/Sidebar.tsx` |
+| Study Tutor | `src/components/StudyTutorView.tsx` |
+| Global Focus Timer & Settings | `src/components/FocusTimerWidget.tsx`, `src/components/SettingsView.tsx` |
+
+## Gemini AI Integration Details
+
+* **Concept Simplifier** – Sends the uploaded note text plus the selected difficulty level to Gemini (`/api/tutor` endpoint).  The response is displayed in the UI and also saved as a PDF for offline study.
+* **Study Tutor** – Implements a multi‑turn chat flow.  Each user turn is sent to Gemini with optional Google Search grounding; the response includes citations that are filtered through `sanitizeCitations` for safety.
+* **Solution Studio** – Generates solution blueprints, feasibility scores, and critique iterations.  Users can request re‑simulation of assumptions; Gemini explains the impact and suggests next steps.
+
+All Gemini calls are performed server‑side (`src/utils/api.ts` → `src/utils/apiClient.ts`) so the secret key lives only in the `.env` file and is never shipped to the browser.
+
+## How Judges Can Explore the Application
+
+1. **Clone & install** – Follow the existing instructions (npm install, copy `.env.example` → `.env`).  Use any dummy value for `GEMINI_API_KEY` if you only want to run the UI; the core UI works offline and the PDF export does not require live AI.
+2. **Run the dev server** – `npm run dev` starts the Express + Vite stack on `http://localhost:3000`.
+3. **Navigate the six core screens** using the sidebar:
+   * Dashboard → see live mastery stats.
+   * Concept Simplifier → upload a small text file and generate a simplified lesson.
+   * Quiz Arena → attempt a few auto‑generated questions.
+   * Learning Gap Detector → view mastery classification.
+   * Experiment Lab → move a slider and observe the simulated chart.
+   * Study Tutor → start a brief chat with the AI.
+4. **Optional AI demo** – If you provide a real Gemini API key, you can test the AI‑generated explanations and tutoring flows.
+5. **Run the test suite** – `npm test` should complete in < 20 seconds with **0 failures**, confirming the reliability of the core logic.
+
+These steps let judges verify that the application meets the hackathon’s vision without any hidden or undeclared functionality.
