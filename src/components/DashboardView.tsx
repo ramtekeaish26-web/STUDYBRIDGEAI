@@ -6,6 +6,7 @@ import {
   BookOpen,
   CheckCircle2,
   FlaskConical,
+  Hammer,
   HelpCircle,
   MessageSquare,
   Target,
@@ -28,6 +29,7 @@ export function DashboardView() {
     quizAttempts,
     weeklyActivity,
     focusSessions,
+    solutions,
     setActiveScreen,
     navigateToQuiz,
     navigateToSimplifier,
@@ -375,7 +377,7 @@ export function DashboardView() {
       {/* Quick Access to All Major Features */}
       <section aria-label="Quick access to features">
         <h2 className="mb-4 text-lg font-semibold text-[#1e2436]">Quick Access</h2>
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <button
             type="button"
             onClick={() => setActiveScreen('simplifier')}
@@ -429,6 +431,20 @@ export function DashboardView() {
             </span>
             <span className="mt-1 text-xs leading-relaxed text-[#5a6378]">
               Explore what-if questions with adjustable assumption sliders.
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveScreen('solutions')}
+            className="neu-btn flex flex-col items-start p-5 text-left"
+          >
+            <Hammer className="h-5 w-5 text-[#059669]" />
+            <span className="mt-3 text-[15px] font-semibold text-[#1e2436]">
+              Solution Studio ({solutions.length})
+            </span>
+            <span className="mt-1 text-xs leading-relaxed text-[#5a6378]">
+              Co-design real-world prototypes with AI and collaborate in Study Rooms.
             </span>
           </button>
 

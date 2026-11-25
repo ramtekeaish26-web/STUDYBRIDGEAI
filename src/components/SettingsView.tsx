@@ -24,6 +24,20 @@ export function SettingsView() {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    const safeName = settings.studentName.trim() || 'Learner';
+    const safeFocus = settings.academicFocus.trim() || 'STEM Foundations';
+    const safeGoal = Math.min(30, Math.max(1, Math.round(settings.weeklyQuizGoal || 1)));
+    if (
+      safeName !== settings.studentName ||
+      safeFocus !== settings.academicFocus ||
+      safeGoal !== settings.weeklyQuizGoal
+    ) {
+      updateSettings({
+        studentName: safeName,
+        academicFocus: safeFocus,
+        weeklyQuizGoal: safeGoal,
+      });
+    }
     setSavedNotice('Preferences saved.');
     setTimeout(() => setSavedNotice(null), 2500);
   };
@@ -159,7 +173,7 @@ export function SettingsView() {
                 value={settings.weeklyQuizGoal}
                 onChange={(e) =>
                   updateSettings({
-                    weeklyQuizGoal: Math.max(1, Number(e.target.value) || 1),
+                    weeklyQuizGoal: Math.min(30, Math.max(1, Math.round(Number(e.target.value) || 1))),
                   })
                 }
                 className="neu-input font-mono-tabular mt-2 w-full px-4 py-2.5 text-sm"

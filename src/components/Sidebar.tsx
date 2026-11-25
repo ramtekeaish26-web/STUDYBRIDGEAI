@@ -4,6 +4,7 @@ import {
   BookOpen,
   Cloud,
   FlaskConical,
+  Hammer,
   HelpCircle,
   LayoutDashboard,
   LogIn,
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'quiz', label: 'Quiz Arena', icon: HelpCircle },
   { id: 'gaps', label: 'Learning Gap Detector', icon: Activity },
   { id: 'experiment', label: 'Experiment Lab', icon: FlaskConical },
+  { id: 'solutions', label: 'Solution Studio', icon: Hammer },
   { id: 'tutor', label: 'Study Tutor', icon: MessageSquare },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];

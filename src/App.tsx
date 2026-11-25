@@ -8,6 +8,7 @@ import { ConceptSimplifierView } from './components/ConceptSimplifierView';
 import { QuizArenaView } from './components/QuizArenaView';
 import { LearningGapDetectorView } from './components/LearningGapDetectorView';
 import { ExperimentLabView } from './components/ExperimentLabView';
+import { SolutionStudioView } from './components/SolutionStudioView';
 import { StudyTutorView } from './components/StudyTutorView';
 import { SettingsView } from './components/SettingsView';
 
@@ -17,6 +18,7 @@ const SCREEN_TITLES: Record<string, string> = {
   quiz: 'Quiz Arena',
   gaps: 'Learning Gap Detector',
   experiment: 'Experiment Lab',
+  solutions: 'Solution Studio',
   tutor: 'Study Tutor',
   settings: 'Settings',
 };
@@ -37,6 +39,8 @@ function StudyBridgeShell() {
         return <LearningGapDetectorView />;
       case 'experiment':
         return <ExperimentLabView />;
+      case 'solutions':
+        return <SolutionStudioView />;
       case 'tutor':
         return <StudyTutorView />;
       case 'settings':

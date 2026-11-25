@@ -4,6 +4,7 @@ export type NavScreen =
   | 'quiz'
   | 'gaps'
   | 'experiment'
+  | 'solutions'
   | 'tutor'
   | 'settings';
 
@@ -184,3 +185,64 @@ export interface WeeklyStudyDay {
   minutes: number;
   quizzes: number;
 }
+
+export interface SolutionTask {
+  id: string;
+  title: string;
+  completed: boolean;
+  assigneeName: string;
+}
+
+export interface SolutionBuildPhase {
+  phase: string;
+  action: string;
+  deliverable: string;
+}
+
+export interface SolutionImpactMetric {
+  metric: string;
+  target: string;
+}
+
+export interface SolutionRisk {
+  challenge: string;
+  mitigation: string;
+}
+
+export interface SolutionContribution {
+  id: string;
+  roomId: string;
+  authorUid: string;
+  authorName: string;
+  kind: 'peer-idea' | 'ai-critique' | 'milestone';
+  text: string;
+  createdAt: string;
+}
+
+export interface SolutionProject {
+  id: string;
+  roomCode: string;
+  ownerUid: string;
+  ownerName: string;
+  title: string;
+  domain: string;
+  problemStatement: string;
+  targetCommunity: string;
+  constraints: string;
+  linkedTopic?: string;
+  solutionSummary: string;
+  feasibilityScore: number;
+  aiIntegrationPlan: string;
+  buildPhases: SolutionBuildPhase[];
+  impactMetrics: SolutionImpactMetric[];
+  tasks: SolutionTask[];
+  risks: SolutionRisk[];
+  visibility: 'open' | 'invite';
+  memberUids: string[];
+  endorseUids: string[];
+  isPublished?: boolean;
+  isAiGenerated?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+

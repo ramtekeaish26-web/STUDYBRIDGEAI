@@ -4,6 +4,8 @@ import {
   QuizAttempt,
   QuizBank,
   SimplifiedLesson,
+  SolutionContribution,
+  SolutionProject,
   StudentSettings,
   TopicMasteryRecord,
   TutorModelId,
@@ -1014,4 +1016,160 @@ export const INITIAL_TUTOR_THREADS: TutorThread[] = [
     ],
   },
 ];
+
+export const INITIAL_SOLUTIONS: SolutionProject[] = [
+  {
+    id: 'room-solar-biofilter',
+    roomCode: 'BIO4821',
+    ownerUid: 'guest',
+    ownerName: 'Aarav',
+    title: 'Algal Photobioreactor Classroom Air & Nitrate Filter',
+    domain: 'Biology & Environmental Engineering',
+    problemStatement:
+      'High-occupancy classrooms accumulate CO2 above 1,200 ppm, reducing student focus, while local runoff carries excess agricultural nitrates.',
+    targetCommunity: 'High school science labs & community water hubs',
+    constraints: 'Under $45 prototype budget using recycled PET columns and LED grow strips',
+    linkedTopic: 'Photosynthesis & Calvin Cycle',
+    solutionSummary:
+      'A tabletop closed-loop Chlorella photobioreactor that pairs light-dependent photosynthetic O2 release with Calvin cycle CO2 capture while metabolizing dissolved nitrates.',
+    feasibilityScore: 84,
+    aiIntegrationPlan:
+      'Use an inexpensive microcontroller + optical turbidity probe with Gemini-assisted calibration curves to optimize light intensity and nutrient dosing intervals.',
+    buildPhases: [
+      {
+        phase: 'Phase 1 · Reactor Assembly',
+        action: 'Build a 2L vertical bubble-column vessel with an aquarium air stone and 450nm/660nm LED strip.',
+        deliverable: 'Leak-tested circulation column',
+      },
+      {
+        phase: 'Phase 2 · Culture & Baseline Logging',
+        action: 'Inoculate Chlorella culture and record pH, dissolved O2, and nitrate strip readings over 72 hours.',
+        deliverable: '3-day baseline uptake table',
+      },
+      {
+        phase: 'Phase 3 · AI Feedback Tuning',
+        action: 'Feed turbidity and CO2 drop measurements into AI iteration to tune photoperiods and prevent photoinhibition.',
+        deliverable: 'Optimized classroom operating schedule',
+      },
+    ],
+    impactMetrics: [
+      { metric: 'CO2 Drawdown Rate', target: '18–25% indoor peak reduction near desk zone' },
+      { metric: 'Nitrate Uptake', target: '> 60% nitrate reduction in 72h batch water' },
+      { metric: 'Unit Build Cost', target: '< $42 using off-the-shelf lab components' },
+    ],
+    tasks: [
+      {
+        id: 'task-bio-1',
+        title: 'Measure light-reaction saturation curve with lux meter',
+        completed: true,
+        assigneeName: 'Aarav',
+      },
+      {
+        id: 'task-bio-2',
+        title: 'Test nitrate strip calibration across 10–50 ppm dilutions',
+        completed: false,
+        assigneeName: 'Open for peer',
+      },
+      {
+        id: 'task-bio-3',
+        title: 'Document safety & sterile culture maintenance checklist',
+        completed: false,
+        assigneeName: 'Open for peer',
+      },
+    ],
+    risks: [
+      {
+        challenge: 'Algal biofouling on inner walls blocks photon penetration',
+        mitigation: 'Add gentle magnetic wiper ring and schedule weekly rinse cycle.',
+      },
+      {
+        challenge: 'Overheating from high-output LED strips',
+        mitigation: 'Keep a 1 cm air gap and run 16h/8h duty cycle.',
+      },
+    ],
+    visibility: 'open',
+    memberUids: [],
+    endorseUids: [],
+    isPublished: false,
+    isAiGenerated: false,
+    createdAt: '2026-11-24T09:00:00Z',
+    updatedAt: '2026-11-24T09:15:00Z',
+  },
+  {
+    id: 'room-microgrid-pricing',
+    roomCode: 'ECN7190',
+    ownerUid: 'guest',
+    ownerName: 'Aarav',
+    title: 'Campus Solar Microgrid Dynamic Load-Sharing Planner',
+    domain: 'Economics & Clean Energy Systems',
+    problemStatement:
+      'Campus dormitories waste peak midday solar surplus while paying steep utility demand charges during evening study hours.',
+    targetCommunity: 'Student housing cooperatives & campus sustainability teams',
+    constraints: 'Zero new battery hardware in Phase 1; relies on behavioral demand shifting',
+    linkedTopic: 'Supply & Demand Equilibrium',
+    solutionSummary:
+      'Applies supply-and-demand equilibrium pricing signals and gamified dorm energy credits to shift EV/laundry/compute loads into solar surplus windows.',
+    feasibilityScore: 88,
+    aiIntegrationPlan:
+      'Combine solar irradiance forecasts with AI-generated equilibrium price nudges so dorm teams schedule high-draw appliances when marginal energy cost approaches zero.',
+    buildPhases: [
+      {
+        phase: 'Phase 1 · Load Audit',
+        action: 'Catalog top 5 shiftable dorm appliances and their kWh demand curves.',
+        deliverable: 'Hourly campus load elasticity profile',
+      },
+      {
+        phase: 'Phase 2 · Equilibrium Credit Simulator',
+        action: 'Model time-of-use credit incentives to clear midday surplus without evening spikes.',
+        deliverable: 'Validated incentive curve',
+      },
+    ],
+    impactMetrics: [
+      { metric: 'Evening Peak Shaving', target: '15–22% drop in 6–9 PM utility draw' },
+      { metric: 'Solar Self-Consumption', target: 'Raise on-site utilization from 54% to 78%' },
+    ],
+    tasks: [
+      {
+        id: 'task-ecn-1',
+        title: 'Survey 20 students on laundry & charging flexibility',
+        completed: true,
+        assigneeName: 'Aarav',
+      },
+      {
+        id: 'task-ecn-2',
+        title: 'Simulate price elasticity sensitivity in Experiment Lab',
+        completed: false,
+        assigneeName: 'Open for peer',
+      },
+    ],
+    risks: [
+      {
+        challenge: 'Participant fatigue after initial launch week',
+        mitigation: 'Automate smart-plug scheduling opt-ins rather than manual daily confirmations.',
+      },
+    ],
+    visibility: 'open',
+    memberUids: [],
+    endorseUids: [],
+    isPublished: false,
+    isAiGenerated: false,
+    createdAt: '2026-11-23T14:20:00Z',
+    updatedAt: '2026-11-23T14:20:00Z',
+  },
+];
+
+export const INITIAL_SOLUTION_CONTRIBUTIONS: Record<string, SolutionContribution[]> = {
+  'room-solar-biofilter': [
+    {
+      id: 'contrib-1',
+      roomId: 'room-solar-biofilter',
+      authorUid: 'guest',
+      authorName: 'Aarav',
+      kind: 'milestone',
+      text: 'Linked this build directly to Photosynthesis & Calvin Cycle so we can optimize photon wavelengths (450nm & 660nm) without wasting power.',
+      createdAt: '2026-11-24T09:15:00Z',
+    },
+  ],
+};
+
 

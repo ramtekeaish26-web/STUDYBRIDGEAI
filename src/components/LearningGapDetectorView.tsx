@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   BookOpen,
   CheckCircle2,
+  Hammer,
   HelpCircle,
   Minus,
   RotateCcw,
@@ -20,7 +21,12 @@ import {
 import { MasteryRing } from './NeomorphicCharts';
 
 export function LearningGapDetectorView() {
-  const { masteryRecords, navigateToQuiz, navigateToSimplifier } = useStudy();
+  const {
+    masteryRecords,
+    navigateToQuiz,
+    navigateToSimplifier,
+    navigateToSolutionWithTopic,
+  } = useStudy();
 
   const overallMastery = calculateOverallMastery(masteryRecords);
   const overallClassification = classifyMastery(
@@ -259,6 +265,14 @@ export function LearningGapDetectorView() {
                           ? 'Retake Quiz'
                           : 'Take Quiz'}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigateToSolutionWithTopic(record.topic)}
+                      className="neu-btn flex min-h-[40px] items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#7c3aed] whitespace-nowrap"
+                    >
+                      <Hammer className="h-3.5 w-3.5" />
+                      <span>Build Solution</span>
                     </button>
                   </div>
                 </div>

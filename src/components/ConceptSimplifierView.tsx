@@ -16,7 +16,9 @@ import {
 } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import { LearningLevel, SimplifiedLesson } from '../types/study';
+import { extractTextFromFile } from '../utils/fileExtract';
 import { downloadLessonAsPdf } from '../utils/pdfExport';
+import { sanitizeCitations } from '../utils/urlSafety';
 
 const LEVELS: LearningLevel[] = ['Beginner', 'Intermediate', 'Advanced'];
 const LANGUAGES = [
@@ -35,21 +37,6 @@ const SUGGESTED_TOPICS = [
   'Federal Reserve Monetary Policy',
   'Thermodynamics Entropy',
 ];
-
-async function extractTextFromFile(file: File): Promise<string> {
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.csv')) {
-    return (await file.text()).slice(0, 6000);
-  }
-  const buffer = await file.arrayBuffer();
-  const decoded = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
-  const readableMatches = decoded.match(/[A-Za-z0-9][A-Za-z0-9 ,.;:()\-/%]{12,}/g) ?? [];
-  const filtered = readableMatches
-    .filter((chunk) => !chunk.includes('obj') && !chunk.includes('endobj') && !chunk.includes('PDF-'))
-    .slice(0, 80)
-    .join(' ');
-  return filtered.slice(0, 5000);
-}
 
 export function ConceptSimplifierView() {
   const {
@@ -87,22 +74,19 @@ export function ConceptSimplifierView() {
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
-    setUploadedFileName(file.name);
 
-    try {
-      const extracted = await extractTextFromFile(file);
-      if (extracted.trim().length > 0) {
-        setNotes(extracted.trim());
-        if (!topic.trim()) {
-          setTopic(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
-        }
-      } else {
-        setError(
-          `Attached "${file.name}", but no plain text stream could be extracted automatically. You can paste key notes in the box below.`
-        );
-      }
-    } catch {
-      setError(`Could not read "${file.name}". Please paste your study notes below.`);
+    const result = await extractTextFromFile(file);
+    if (result.error) {
+      setError(result.error);
+      setUploadedFileName('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setUploadedFileName(file.name);
+    setNotes(result.text);
+    if (!topic.trim()) {
+      setTopic(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
     }
   };
 
@@ -149,7 +133,7 @@ export function ConceptSimplifierView() {
         examples: Array.isArray(payload.examples) ? payload.examples : [],
         analogies: Array.isArray(payload.analogies) ? payload.analogies : [],
         keyTakeaways: Array.isArray(payload.keyTakeaways) ? payload.keyTakeaways : [],
-        groundedSources: Array.isArray(payload.groundedSources) ? payload.groundedSources : [],
+        groundedSources: sanitizeCitations(payload.groundedSources),
         sourceNoteName: uploadedFileName || undefined,
         createdAt: new Date().toISOString(),
         isAiGenerated: true,
@@ -537,29 +521,33 @@ export function ConceptSimplifierView() {
                 </ul>
               </div>
 
-              {currentLesson.groundedSources && currentLesson.groundedSources.length > 0 && (
-                <div className="neu-inset p-5">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#6366f1]">
-                    <Globe className="h-4 w-4" />
-                    <span>Grounded Web Sources</span>
+              {(() => {
+                const safeSources = sanitizeCitations(currentLesson.groundedSources);
+                if (safeSources.length === 0) return null;
+                return (
+                  <div className="neu-inset p-5">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-[#6366f1]">
+                      <Globe className="h-4 w-4" />
+                      <span>Grounded Web Sources</span>
+                    </div>
+                    <ul className="mt-3 space-y-1.5">
+                      {safeSources.map((src, idx) => (
+                        <li key={`${src.uri}-${idx}`}>
+                          <a
+                            href={src.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#6366f1] hover:underline"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                            <span>{src.title}</span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="mt-3 space-y-1.5">
-                    {currentLesson.groundedSources.map((src, idx) => (
-                      <li key={`${src.uri}-${idx}`}>
-                        <a
-                          href={src.uri}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-xs font-medium text-[#6366f1] hover:underline"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                          <span>{src.title}</span>
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                );
+              })()}
             </article>
           ) : (
             <div className="flex min-h-[320px] flex-col items-center justify-center text-center">

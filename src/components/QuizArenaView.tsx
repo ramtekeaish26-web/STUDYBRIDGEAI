@@ -94,23 +94,35 @@ export function QuizArenaView() {
         throw new Error(data.error || 'Failed to generate quiz.');
       }
 
-      const generatedQuestions: QuizQuestion[] = (data.questions || []).map(
-        (
-          q: {
-            prompt: string;
-            options: string[];
-            correctIndex: number;
-            explanation: string;
-          },
-          idx: number
-        ) => ({
-          id: `ai-q-${Date.now()}-${idx}`,
-          prompt: q.prompt,
-          options: q.options.slice(0, 4),
-          correctIndex: Math.min(Math.max(Number(q.correctIndex) || 0, 0), 3),
-          explanation: q.explanation,
-        })
-      );
+      const generatedQuestions: QuizQuestion[] = (data.questions || [])
+        .filter((q: { prompt?: string; options?: unknown[] }) => q && typeof q.prompt === 'string' && Array.isArray(q.options))
+        .map(
+          (
+            q: {
+              prompt: string;
+              options: string[];
+              correctIndex: number;
+              explanation: string;
+            },
+            idx: number
+          ) => {
+            const opts = q.options.slice(0, 4).map((o) => String(o));
+            while (opts.length < 4) {
+              opts.push(`Option ${opts.length + 1}`);
+            }
+            const parsedIdx = Number(q.correctIndex);
+            const safeCorrectIndex = Number.isFinite(parsedIdx)
+              ? Math.min(Math.max(parsedIdx, 0), opts.length - 1)
+              : 0;
+            return {
+              id: `ai-q-${Date.now()}-${idx}`,
+              prompt: q.prompt,
+              options: opts,
+              correctIndex: safeCorrectIndex,
+              explanation: String(q.explanation || 'Review the lesson explanation for details.'),
+            };
+          }
+        );
 
       if (generatedQuestions.length === 0) {
         throw new Error('The AI service returned zero questions. Please try again.');

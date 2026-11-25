@@ -11,6 +11,7 @@ import {
 import { useStudy } from '../context/StudyContext';
 import { TUTOR_MODELS, TUTOR_ROLES } from '../data/sampleData';
 import { TutorMessage, TutorModelId, TutorRoleId } from '../types/study';
+import { sanitizeCitations } from '../utils/urlSafety';
 
 const STARTER_PROMPTS = [
   'Walk me through why ATP yield differs between aerobic and anaerobic respiration.',
@@ -121,7 +122,7 @@ export function StudyTutorView() {
         role: 'model',
         text: data.reply,
         modelId: data.modelUsed,
-        citations: Array.isArray(data.citations) ? data.citations : [],
+        citations: sanitizeCitations(data.citations),
         createdAt: new Date().toISOString(),
       };
 
@@ -317,30 +318,34 @@ export function StudyTutorView() {
                       </div>
                       <div className="whitespace-pre-wrap">{msg.text}</div>
 
-                      {msg.citations && msg.citations.length > 0 && (
-                        <div className="mt-3 border-t border-[#d5d9e3] pt-2.5">
-                          <p className="text-[11px] font-semibold text-[#5a6378]">
-                            Grounded Web Sources
-                          </p>
-                          <ul className="mt-1.5 space-y-1">
-                            {msg.citations.map((cite, idx) => (
-                              <li key={`${cite.uri}-${idx}`}>
-                                <a
-                                  href={cite.uri}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs font-medium text-[#6366f1] hover:underline"
-                                >
-                                  <ExternalLink className="h-3 w-3 shrink-0" />
-                                  <span className="truncate max-w-[360px]">
-                                    {cite.title}
-                                  </span>
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      {(() => {
+                        const safeCites = sanitizeCitations(msg.citations);
+                        if (safeCites.length === 0) return null;
+                        return (
+                          <div className="mt-3 border-t border-[#d5d9e3] pt-2.5">
+                            <p className="text-[11px] font-semibold text-[#5a6378]">
+                              Grounded Web Sources
+                            </p>
+                            <ul className="mt-1.5 space-y-1">
+                              {safeCites.map((cite, idx) => (
+                                <li key={`${cite.uri}-${idx}`}>
+                                  <a
+                                    href={cite.uri}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-[#6366f1] hover:underline"
+                                  >
+                                    <ExternalLink className="h-3 w-3 shrink-0" />
+                                    <span className="truncate max-w-[360px]">
+                                      {cite.title}
+                                    </span>
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );

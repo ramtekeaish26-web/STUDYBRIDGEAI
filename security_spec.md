@@ -5,7 +5,9 @@
 2. Every document ID (`lessonId`, `topicId`, `attemptId`, `sessionId`, `threadId`, `experimentId`) must match `^[a-zA-Z0-9_\-]+$` and stay `<= 128` characters.
 3. No client may inject arbitrary shadow fields (`hasOnly`), oversized payloads (strict `.size()` limits on every string and list), or forged `createdAt` / `updatedAt` timestamps (`request.time`).
 4. `uid` and `createdAt` are immutable after document creation (`incoming().uid == existing().uid` and `incoming().createdAt == existing().createdAt`).
-5. Quiz attempts and focus sessions are append-only logs (no client-side tampering updates allowed).
+5. Quiz attempts, focus sessions, and study room contributions are append-only logs (no client-side tampering updates allowed).
+6. Collaborative `/studyRooms/{roomId}` documents never store PII (no email/phone), enforce bounded `memberUids` (`<= 20`) and `endorseUids` (`<= 25`), restrict `list` queries strictly by `visibility == 'open'`, `ownerUid`, or `memberUids`, and separate owner edits from collaborator task/join actions.
+7. `/studyRooms/{roomId}/contributions/{contributionId}` enforces Master Gate `get()` verification on create against the parent room and verifies `authorUid == request.auth.uid`.
 
 ## 2. Adversarial "Dirty Dozen" Payloads (Expected: PERMISSION_DENIED)
 1. Cross-user profile read (`get /users/otherUser`) by signed-in user `alice`.
@@ -20,3 +22,5 @@
 10. Mutating immutable `uid` or `createdAt` on `/users/alice/tutorThreads/t-1` update.
 11. Out-of-range `scorePercent` (`150` or `-5`) on `/users/alice/quizAttempts/qa-1`.
 12. Invalid `defaultLevel` enum (`"GodMode"`) on `/users/alice` update.
+13. Non-owner attempting to overwrite `problemStatement` or `ownerUid` on `/studyRooms/{roomId}`.
+14. Posting a `/studyRooms/{roomId}/contributions/{id}` document with spoofed `authorUid` or onto a non-existent parent room.

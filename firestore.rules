@@ -301,6 +301,123 @@ service cloud.firestore {
       && data.createdAt is timestamp;
     }
 
+    function isValidStudyRoom(data, roomId) {
+      return data.keys().hasAll([
+        'id',
+        'roomCode',
+        'ownerUid',
+        'ownerName',
+        'title',
+        'domain',
+        'problemStatement',
+        'targetCommunity',
+        'constraints',
+        'solutionSummary',
+        'feasibilityScore',
+        'aiIntegrationPlan',
+        'buildPhases',
+        'impactMetrics',
+        'tasks',
+        'risks',
+        'visibility',
+        'memberUids',
+        'endorseUids',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'roomCode',
+        'ownerUid',
+        'ownerName',
+        'title',
+        'domain',
+        'problemStatement',
+        'targetCommunity',
+        'constraints',
+        'linkedTopic',
+        'solutionSummary',
+        'feasibilityScore',
+        'aiIntegrationPlan',
+        'buildPhases',
+        'impactMetrics',
+        'tasks',
+        'risks',
+        'visibility',
+        'memberUids',
+        'endorseUids',
+        'isAiGenerated',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.id is string && data.id == roomId && isValidId(data.id)
+      && data.roomCode is string && data.roomCode.size() >= 4 && data.roomCode.size() <= 12 && data.roomCode.matches('^[A-Z0-9]+$')
+      && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+      && data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80
+      && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+      && data.domain is string && data.domain.size() >= 1 && data.domain.size() <= 100
+      && data.problemStatement is string && data.problemStatement.size() >= 1 && data.problemStatement.size() <= 1200
+      && data.targetCommunity is string && data.targetCommunity.size() >= 1 && data.targetCommunity.size() <= 240
+      && data.constraints is string && data.constraints.size() <= 600
+      && (!('linkedTopic' in data) || (data.linkedTopic is string && data.linkedTopic.size() <= 160))
+      && data.solutionSummary is string && data.solutionSummary.size() >= 1 && data.solutionSummary.size() <= 1800
+      && data.feasibilityScore is int && data.feasibilityScore >= 0 && data.feasibilityScore <= 100
+      && data.aiIntegrationPlan is string && data.aiIntegrationPlan.size() <= 1500
+      && data.buildPhases is list && data.buildPhases.size() <= 10
+      && data.impactMetrics is list && data.impactMetrics.size() <= 10
+      && data.tasks is list && data.tasks.size() <= 20
+      && data.risks is list && data.risks.size() <= 10
+      && data.visibility is string && data.visibility in ['open', 'invite']
+      && data.memberUids is list && data.memberUids.size() <= 20
+      && (data.memberUids.size() == 0 || data.memberUids[0] is string)
+      && data.endorseUids is list && data.endorseUids.size() <= 25
+      && (data.endorseUids.size() == 0 || data.endorseUids[0] is string)
+      && (!('isAiGenerated' in data) || data.isAiGenerated is bool)
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidRoomContribution(data, roomId, contributionId) {
+      return data.keys().hasAll([
+        'id',
+        'roomId',
+        'roomOwnerUid',
+        'roomVisibility',
+        'authorUid',
+        'authorName',
+        'kind',
+        'text',
+        'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'roomId',
+        'roomOwnerUid',
+        'roomVisibility',
+        'authorUid',
+        'authorName',
+        'kind',
+        'text',
+        'createdAt'
+      ])
+      && data.id is string && data.id == contributionId && isValidId(data.id)
+      && data.roomId is string && data.roomId == roomId && isValidId(data.roomId)
+      && data.roomOwnerUid is string && data.roomOwnerUid.size() >= 1 && data.roomOwnerUid.size() <= 128
+      && data.roomVisibility is string && data.roomVisibility in ['open', 'invite']
+      && data.authorUid is string && data.authorUid == request.auth.uid && data.authorUid.size() <= 128
+      && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+      && data.kind is string && data.kind in ['peer-idea', 'ai-critique', 'milestone']
+      && data.text is string && data.text.size() >= 1 && data.text.size() <= 1500
+      && data.createdAt is timestamp;
+    }
+
+    function canContributeToRoom(roomId, data) {
+      let room = get(/databases/$(database)/documents/studyRooms/$(roomId)).data;
+      return data.roomOwnerUid == room.ownerUid
+        && data.roomVisibility == room.visibility
+        && (room.visibility == 'open' || room.ownerUid == request.auth.uid || request.auth.uid in room.memberUids);
+    }
+
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
       allow list: if false;
@@ -450,6 +567,99 @@ service cloud.firestore {
           && incoming().createdAt == request.time;
         allow update: if false;
         allow delete: if isValidId(userId) && isValidId(experimentId) && isVerifiedOwner(userId);
+      }
+    }
+
+    match /studyRooms/{roomId} {
+      allow get: if isValidId(roomId)
+        && isSignedIn()
+        && (resource.data.visibility == 'open'
+          || resource.data.ownerUid == request.auth.uid
+          || request.auth.uid in resource.data.memberUids);
+      allow list: if isSignedIn()
+        && (resource.data.visibility == 'open'
+          || resource.data.ownerUid == request.auth.uid
+          || request.auth.uid in resource.data.memberUids);
+      allow create: if isValidId(roomId)
+        && isVerifiedUser()
+        && isValidStudyRoom(incoming(), roomId)
+        && incoming().ownerUid == request.auth.uid
+        && incoming().memberUids.size() == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(roomId)
+        && isVerifiedUser()
+        && isValidStudyRoom(incoming(), roomId)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().roomCode == existing().roomCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            request.auth.uid == existing().ownerUid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'domain',
+              'problemStatement',
+              'targetCommunity',
+              'constraints',
+              'linkedTopic',
+              'solutionSummary',
+              'feasibilityScore',
+              'aiIntegrationPlan',
+              'buildPhases',
+              'impactMetrics',
+              'tasks',
+              'risks',
+              'visibility',
+              'updatedAt'
+            ])
+          )
+          ||
+          (
+            request.auth.uid != existing().ownerUid
+            && existing().visibility == 'open'
+            && !(request.auth.uid in existing().memberUids)
+            && incoming().memberUids.hasAll(existing().memberUids)
+            && request.auth.uid in incoming().memberUids
+            && incoming().memberUids.size() == existing().memberUids.size() + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+          )
+          ||
+          (
+            (existing().visibility == 'open' || request.auth.uid in existing().memberUids)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['tasks', 'endorseUids', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(roomId)
+        && isVerifiedUser()
+        && existing().ownerUid == request.auth.uid;
+
+      match /contributions/{contributionId} {
+        allow get: if isValidId(roomId)
+          && isValidId(contributionId)
+          && isSignedIn()
+          && (resource.data.roomVisibility == 'open'
+            || resource.data.authorUid == request.auth.uid
+            || resource.data.roomOwnerUid == request.auth.uid
+            || request.auth.uid in get(/databases/$(database)/documents/studyRooms/$(roomId)).data.memberUids);
+        allow list: if isSignedIn()
+          && (resource.data.roomVisibility == 'open'
+            || resource.data.authorUid == request.auth.uid
+            || resource.data.roomOwnerUid == request.auth.uid);
+        allow create: if isValidId(roomId)
+          && isValidId(contributionId)
+          && isVerifiedUser()
+          && isValidRoomContribution(incoming(), roomId, contributionId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/studyRooms/$(roomId))
+          && canContributeToRoom(roomId, incoming());
+        allow update: if false;
+        allow delete: if isValidId(roomId)
+          && isValidId(contributionId)
+          && isVerifiedUser()
+          && (existing().authorUid == request.auth.uid || existing().roomOwnerUid == request.auth.uid);
       }
     }
   }

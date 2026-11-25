@@ -165,7 +165,7 @@ function drawRule(state: DrawState) {
   state.y -= 14;
 }
 
-function buildLessonPdfBytes(lesson: SimplifiedLesson): Uint8Array {
+export function buildLessonPdfBytes(lesson: SimplifiedLesson): Uint8Array {
   const state: DrawState = {
     pages: [],
     currentPage: [],

@@ -203,6 +203,86 @@
         "chartSeries",
         "createdAt"
       ]
+    },
+    "StudyRoom": {
+      "title": "StudyRoom",
+      "description": "Collaborative AI solution blueprint room where peers share ideas, claim tasks, and iterate together.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "roomCode": { "type": "string", "pattern": "^[A-Z0-9]{4,12}$", "maxLength": 12 },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ownerName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "problemStatement": { "type": "string", "minLength": 1, "maxLength": 1200 },
+        "targetCommunity": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "constraints": { "type": "string", "maxLength": 600 },
+        "linkedTopic": { "type": "string", "maxLength": 160 },
+        "solutionSummary": { "type": "string", "minLength": 1, "maxLength": 1800 },
+        "feasibilityScore": { "type": "number" },
+        "aiIntegrationPlan": { "type": "string", "maxLength": 1500 },
+        "buildPhases": { "type": "array" },
+        "impactMetrics": { "type": "array" },
+        "tasks": { "type": "array" },
+        "risks": { "type": "array" },
+        "visibility": { "type": "string", "enum": ["open", "invite"] },
+        "memberUids": { "type": "array" },
+        "endorseUids": { "type": "array" },
+        "isAiGenerated": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "roomCode",
+        "ownerUid",
+        "ownerName",
+        "title",
+        "domain",
+        "problemStatement",
+        "targetCommunity",
+        "constraints",
+        "solutionSummary",
+        "feasibilityScore",
+        "aiIntegrationPlan",
+        "buildPhases",
+        "impactMetrics",
+        "tasks",
+        "risks",
+        "visibility",
+        "memberUids",
+        "endorseUids",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RoomContribution": {
+      "title": "RoomContribution",
+      "description": "Peer idea, milestone update, or AI critique note inside a collaborative study room.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "roomId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "roomOwnerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomVisibility": { "type": "string", "enum": ["open", "invite"] },
+        "authorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "kind": { "type": "string", "enum": ["peer-idea", "ai-critique", "milestone"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "roomId",
+        "roomOwnerUid",
+        "roomVisibility",
+        "authorUid",
+        "authorName",
+        "kind",
+        "text",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -233,6 +313,14 @@
     "/users/{userId}/experiments/{experimentId}": {
       "schema": { "$ref": "#/entities/Experiment" },
       "description": "User's Experiment Lab what-if scenarios."
+    },
+    "/studyRooms/{roomId}": {
+      "schema": { "$ref": "#/entities/StudyRoom" },
+      "description": "Collaborative Solution Studio rooms where students share blueprints and build solutions."
+    },
+    "/studyRooms/{roomId}/contributions/{contributionId}": {
+      "schema": { "$ref": "#/entities/RoomContribution" },
+      "description": "Collaborative peer notes, critiques, and milestone logs inside a study room."
     }
   }
 }

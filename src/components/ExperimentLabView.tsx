@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Compass,
   FlaskConical,
+  Hammer,
   Loader2,
   RotateCcw,
   Sliders,
@@ -10,6 +11,10 @@ import {
 } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import { ExperimentParameter, ExperimentScenario } from '../types/study';
+import {
+  computeSimulatedChartSeries,
+  sanitizeExperimentParameters,
+} from '../utils/experimentMath';
 
 const EXAMPLE_QUESTIONS = [
   "What if Earth's surface gravity doubled from 9.8 m/s² to 19.6 m/s²?",
@@ -19,7 +24,7 @@ const EXAMPLE_QUESTIONS = [
 ];
 
 export function ExperimentLabView() {
-  const { experiments, addExperiment } = useStudy();
+  const { experiments, addExperiment, navigateToSolutionWithTopic } = useStudy();
   const [selectedId, setSelectedId] = useState<string>(experiments[0]?.id ?? '');
   const [questionInput, setQuestionInput] = useState<string>('');
   const [paramOverrides, setParamOverrides] = useState<Record<string, number>>({});
@@ -32,31 +37,13 @@ export function ExperimentLabView() {
   const getParamValue = (p: ExperimentParameter): number =>
     paramOverrides[p.id] !== undefined ? paramOverrides[p.id] : p.value;
 
-  // Dynamically scale chart values smoothly based on assumption slider deviation from baseline
   const dynamicChartSeries = useMemo(() => {
     if (!activeExperiment) return [];
-    const params = activeExperiment.parameters;
-    if (params.length === 0) return activeExperiment.chartSeries;
-
-    const avgShiftFactor =
-      params.reduce((acc, p) => {
-        const current = getParamValue(p);
-        const span = Math.max(p.max - p.min, 1);
-        const deltaRatio = (current - p.value) / span;
-        return acc + deltaRatio * p.sensitivity;
-      }, 0) / params.length;
-
-    return activeExperiment.chartSeries.map((pt, idx) => {
-      const direction = idx % 2 === 0 ? 1 : -1;
-      const adjusted = Math.max(
-        5,
-        Math.round(pt.simulated * (1 + avgShiftFactor * 0.65 * direction))
-      );
-      return {
-        ...pt,
-        simulated: adjusted,
-      };
-    });
+    return computeSimulatedChartSeries(
+      activeExperiment.chartSeries,
+      activeExperiment.parameters,
+      paramOverrides
+    );
   }, [activeExperiment, paramOverrides]);
 
   const handleSelectExperiment = (exp: ExperimentScenario) => {
@@ -65,14 +52,7 @@ export function ExperimentLabView() {
     setError(null);
   };
 
-  const handleRunExperiment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanQuestion = questionInput.trim();
-    if (!cleanQuestion) {
-      setError('Enter a what-if question to run an experiment.');
-      return;
-    }
-
+  const executeExperimentQuery = async (cleanQuestion: string, clearInput: boolean) => {
     setLoading(true);
     setError(null);
 
@@ -98,7 +78,7 @@ export function ExperimentLabView() {
         throw new Error(data.error || 'Failed to run experiment.');
       }
 
-      const exp = data.experiment;
+      const exp = data.experiment || {};
       const created: ExperimentScenario = {
         id: `exp-${Date.now()}`,
         question: cleanQuestion,
@@ -106,7 +86,7 @@ export function ExperimentLabView() {
         domain: exp.domain || 'Interdisciplinary Systems',
         summary: exp.summary || '',
         predictions: Array.isArray(exp.predictions) ? exp.predictions : [],
-        parameters: Array.isArray(exp.parameters) ? exp.parameters : [],
+        parameters: sanitizeExperimentParameters(exp.parameters),
         outcomeExplanation: Array.isArray(exp.outcomeExplanation)
           ? exp.outcomeExplanation
           : [],
@@ -120,7 +100,9 @@ export function ExperimentLabView() {
       addExperiment(created);
       setSelectedId(created.id);
       setParamOverrides({});
-      setQuestionInput('');
+      if (clearInput) {
+        setQuestionInput('');
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Unable to generate experiment right now.'
@@ -128,6 +110,16 @@ export function ExperimentLabView() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRunExperiment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanQuestion = questionInput.trim();
+    if (!cleanQuestion) {
+      setError('Enter a what-if question to run an experiment.');
+      return;
+    }
+    await executeExperimentQuery(cleanQuestion, true);
   };
 
   const maxChartVal = Math.max(
@@ -243,16 +235,26 @@ export function ExperimentLabView() {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
           {/* Interactive Simulation Stage (Left / 7 cols) */}
           <section className="neu-raised p-6 space-y-6 xl:col-span-7">
-            <div className="border-b border-[#d4d8e2] pb-4">
-              <p className="text-xs font-medium text-[#7c3aed]">
-                {activeExperiment.domain}
-              </p>
-              <h2 className="mt-1 text-xl font-semibold text-[#1e2436]">
-                {activeExperiment.question}
-              </h2>
-              <p className="mt-2 text-sm leading-relaxed text-[#3d4558]">
-                {activeExperiment.summary}
-              </p>
+            <div className="flex flex-col gap-3 border-b border-[#d4d8e2] pb-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-medium text-[#7c3aed]">
+                  {activeExperiment.domain}
+                </p>
+                <h2 className="mt-1 text-xl font-semibold text-[#1e2436]">
+                  {activeExperiment.question}
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-[#3d4558]">
+                  {activeExperiment.summary}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigateToSolutionWithTopic(activeExperiment.title)}
+                className="neu-btn flex min-h-[40px] shrink-0 items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#6366f1] whitespace-nowrap"
+              >
+                <Hammer className="h-3.5 w-3.5" />
+                <span>Build Solution</span>
+              </button>
             </div>
 
             {/* Baseline vs. Simulated Chart */}
@@ -401,6 +403,18 @@ export function ExperimentLabView() {
                   );
                 })}
               </div>
+
+              {Object.keys(paramOverrides).length > 0 && (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => executeExperimentQuery(activeExperiment.question, false)}
+                  className="neu-btn mt-5 flex min-h-[40px] w-full items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-[#7c3aed] disabled:opacity-60"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Re-Simulate Current Sliders with AI</span>
+                </button>
+              )}
             </div>
 
             {/* Explanation of Outcomes */}
